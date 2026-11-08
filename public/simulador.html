@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Simulador de WhatsApp — MudaJá</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap wide"><a class="logo" href="/">Muda<span>Já</span> <small style="color:var(--muted);font-weight:500">simulador</small></a>
+  <nav><a href="/admin">Painel</a> <a href="/" target="_blank">Novo pedido</a></nav></div></header>
+<main class="wrap wide">
+  <p class="sub" style="margin-top:16px">Teste o fluxo sem número de WhatsApp: escolha um contato e mande mensagens como se fosse ele. Precisa da senha do painel (entre em <a href="/admin">/admin</a> primeiro).</p>
+  <div class="sim">
+    <div class="contatos"><h3>Freteiros</h3><div id="freteiros"></div><h3>Clientes</h3><div id="clientes"></div>
+      <button class="sec peq" id="tick" style="margin-top:12px">⏩ Rodar agendador agora</button></div>
+    <div>
+      <div class="chat" id="chat"><div class="sub">Selecione um contato.</div></div>
+      <form class="enviar" id="form"><input id="texto" placeholder="Mensagem…" autocomplete="off"><button>Enviar</button></form>
+      <div class="atalhos" id="atalhos"></div>
+    </div>
+  </div>
+</main>
+<script type="module">
+import { $, api, esc } from '/comum.js';
+const senha = sessionStorage.getItem('senha') || prompt('Senha do painel') || '';
+sessionStorage.setItem('senha', senha);
+const adm = (url, opts = {}) => api(`/api/admin${url}`, { ...opts, headers: { 'x-admin-senha': senha } });
+let atual = null, ehFreteiro = false;
+
+async function contatos() {
+  const c = await adm('/sim/contatos');
+  const btn = (x, f) => `<button data-tel="${x.telefone}" data-f="${f ? 1 : 0}" class="${atual === x.telefone ? 'on' : ''}">${esc(x.nome)}<br><small>${x.telefone}</small></button>`;
+  $('#freteiros').innerHTML = c.freteiros.map((x) => btn(x, true)).join('') || '<small>Rode <code>npm run seed</code></small>';
+  $('#clientes').innerHTML = c.clientes.map((x) => btn(x, false)).join('') || '<small>Faça um pedido na página inicial</small>';
+}
+
+async function chat() {
+  if (!atual) return;
+  const ms = await adm(`/sim/mensagens?telefone=${atual}`);
+  const el = $('#chat');
+  const noFim = el.scrollHeight - el.scrollTop - el.clientHeight < 40;
+  el.innerHTML = ms.map((m) => `<div class="bolha ${m.direcao}">${esc(m.texto).replace(/(https?:\/\/\S+)/g, '<a href="$1" target="_blank">$1</a>')}<time>${new Date(m.criado_em.replace(' ', 'T') + 'Z').toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}</time></div>`).join('') || '<div class="sub">Sem mensagens.</div>';
+  if (noFim) el.scrollTop = el.scrollHeight;
+  const ultimoCodigo = [...ms].reverse().map((m) => m.texto.match(/#([A-Z2-9]{4})/)).find(Boolean)?.[1] || 'XXXX';
+  $('#atalhos').innerHTML = (ehFreteiro
+    ? [`#${ultimoCodigo} 350 reais, chego em 30 min com 1 ajudante`, `#${ultimoCodigo} faço por 280 agora`, `#${ultimoCodigo} R$ 420 amanhã às 9h`, 'PAUSAR', 'VOLTAR', `CONCLUIDO #${ultimoCodigo}`]
+    : ['1', '2', '3', '5', 'CANCELAR']).map((t) => `<button class="sec peq" data-atalho="${esc(t)}">${esc(t)}</button>`).join('');
+}
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.tel) { atual = b.dataset.tel; ehFreteiro = b.dataset.f === '1'; $('#chat').scrollTop = 1e9; await contatos(); await chat(); $('#chat').scrollTop = 1e9; }
+  if (b.dataset.atalho) { $('#texto').value = b.dataset.atalho; $('#texto').focus(); }
+  if (b.id === 'tick') { await adm('/tick', { method: 'POST' }); chat(); }
+});
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  if (!atual || !$('#texto').value.trim()) return;
+  try { await adm('/sim/enviar', { method: 'POST', body: { telefone: atual, texto: $('#texto').value } }); $('#texto').value = ''; await chat(); $('#chat').scrollTop = 1e9; }
+  catch (err) { alert(err.message); }
+});
+contatos(); setInterval(() => { contatos(); chat(); }, 3000);
+</script>
+</body>
+</html>

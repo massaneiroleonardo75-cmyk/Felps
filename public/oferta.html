@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mandar oferta — MudaJá</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap"><a class="logo" href="/">Muda<span>Já</span></a><span class="status" id="cod"></span></div></header>
+<main class="wrap" id="app"><div class="card espera">Carregando…</div></main>
+<script type="module">
+import { $, api, esc, reais, dataHora, hora, dadosDoForm, mostrarErro } from '/comum.js';
+const codigo = location.pathname.split('/').pop();
+const f = new URLSearchParams(location.search).get('f');
+const url = `/api/ofertas/${codigo}?f=${encodeURIComponent(f || '')}`;
+
+async function carregar() {
+  let d;
+  try { d = await api(url); } catch (e) { $('#app').innerHTML = `<div class="card erro on">${esc(e.message)}</div>`; return; }
+  const p = d.pedido, m = d.minhaOferta;
+  $('#cod').textContent = `#${p.codigo}`;
+  const andar = (n, el) => (n > 0 ? ` · ${n}º andar ${el ? '(elevador)' : '(escada)'}` : '');
+  $('#app').innerHTML = `
+  <div class="card"><h2>${esc(p.tipo)}</h2><p class="sub">Olá, ${esc(d.freteiro.nome.split(' ')[0])}! Confira o pedido e mande seu preço.</p>
+    <dl class="info">
+      <dt>Carga</dt><dd>${esc(p.volume)}</dd>
+      <dt>Itens</dt><dd>${esc(p.itens)}</dd>
+      <dt>Retirada</dt><dd>${esc(p.origem)}${andar(p.origem_andar, p.origem_elevador)}</dd>
+      <dt>Entrega</dt><dd>${esc(p.destino)}${andar(p.destino_andar, p.destino_elevador)}</dd>
+      <dt>Distância</dt><dd>~${Math.round(p.distancia_km)} km</dd>
+      <dt>Quando</dt><dd>${p.quando === 'imediato' ? '⚡ <b>Imediato</b>' : dataHora(p.data_hora)}</dd>
+      <dt>Ajudantes</dt><dd>${p.ajudantes || 'Não precisa'}${p.montagem ? ' · precisa montar/desmontar' : ''}</dd>
+      ${p.empresa ? '<dt>Cliente</dt><dd>🏢 Empresa</dd>' : ''}
+      ${p.observacoes ? `<dt>Obs.</dt><dd>${esc(p.observacoes)}</dd>` : ''}
+      <dt>Referência</dt><dd>${reais(p.estimativa_min)} a ${reais(p.estimativa_max)}</dd>
+    </dl>
+  </div>
+  ${!p.aberto ? '<div class="card"><h2>Pedido encerrado</h2><p class="sub">Este pedido não recebe mais ofertas.</p></div>' : `
+  <form class="card" id="form">
+    <h2>${m ? 'Atualizar minha oferta' : 'Minha oferta'}</h2>
+    <p class="sub">Ofertas até <b>${hora(p.prazo_ofertas)}</b>. O cliente só vê seu primeiro nome, nota e oferta.</p>
+    <label for="valor">Valor total (R$)</label>
+    <input id="valor" name="valor" type="number" min="20" step="10" inputmode="numeric" required value="${m ? m.valor : ''}">
+    <label>Disponibilidade</label>
+    <div class="opcoes-grandes">
+      <label class="chip"><input type="radio" name="quando" value="imediato" ${p.quando === 'imediato' ? 'checked' : ''}><span>⚡ Vou agora</span></label>
+      <label class="chip"><input type="radio" name="quando" value="horario" ${p.quando !== 'imediato' ? 'checked' : ''}><span>🕒 Em um horário</span></label>
+    </div>
+    <div id="b-eta"><label for="eta">Chego na retirada em (minutos)</label><input id="eta" name="eta_minutos" type="number" min="5" step="5" value="${m?.eta_minutos || 30}"></div>
+    <div id="b-hora"><label for="horario">Dia e horário</label><input id="horario" name="horario" type="datetime-local" value="${p.data_hora ? new Date(new Date(p.data_hora) - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16) : ''}"></div>
+    <div class="row">
+      <div><label for="ajudantes">Ajudantes inclusos</label><input id="ajudantes" name="ajudantes" type="number" min="0" max="6" value="${m?.ajudantes ?? d.freteiro.ajudantes}"></div>
+      <div><label for="veiculo">Veículo</label><input id="veiculo" name="veiculo" value="${esc(m?.veiculo || d.freteiro.veiculo)}"></div>
+    </div>
+    <label for="observacoes">Observações</label><input id="observacoes" name="observacoes" value="${esc(m?.observacoes || '')}" placeholder="Ex: pedágio à parte, aceito Pix/cartão">
+    <div class="erro" id="erro"></div>
+    <button class="full" type="submit">${m ? 'Atualizar oferta' : 'Enviar oferta'}</button>
+  </form>`}`;
+  const form = $('#form');
+  if (!form) return;
+  const vis = () => { const q = dadosDoForm(form).quando; $('#b-eta').classList.toggle('esconde', q !== 'imediato'); $('#b-hora').classList.toggle('esconde', q === 'imediato'); };
+  form.addEventListener('change', vis); vis();
+  form.addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      await api(url, { method: 'POST', body: dadosDoForm(form) });
+      await carregar();
+      $('#app').insertAdjacentHTML('afterbegin', '<div class="ok">✅ Oferta enviada! Você também recebeu a confirmação no WhatsApp.</div>');
+    } catch (e) { mostrarErro($('#erro'), e.message); }
+  });
+}
+carregar();
+</script>
+</body>
+</html>

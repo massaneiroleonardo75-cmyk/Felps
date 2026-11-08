@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Painel — MudaJá</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap wide"><a class="logo" href="/">Muda<span>Já</span> <small style="color:var(--muted);font-weight:500">painel</small></a>
+  <nav><a href="/simulador">Simulador WhatsApp</a></nav></div></header>
+<main class="wrap wide">
+  <form id="login" class="card" style="max-width:380px;margin:40px auto">
+    <h2>Entrar</h2><label for="senha">Senha do painel</label><input id="senha" type="password" autocomplete="current-password">
+    <div class="erro" id="erro-login"></div><button class="full" style="margin-top:12px">Entrar</button>
+  </form>
+  <div id="painel" class="esconde">
+    <div class="kpis" id="kpis"></div>
+    <div class="tabs"><button data-tab="pedidos" class="on">Pedidos</button><button data-tab="freteiros">Freteiros</button><button data-tab="precos">Preços</button></div>
+    <section id="tab-pedidos" class="card tabela"></section>
+    <section id="tab-freteiros" class="card esconde">
+      <div class="tabela" id="lista-freteiros"></div>
+      <h3>Cadastrar freteiro manualmente</h3>
+      <form id="novo-freteiro" class="row">
+        <input name="nome" placeholder="Nome" required><input name="telefone" placeholder="WhatsApp" required>
+        <select name="veiculo" id="sel-veiculo"></select><input name="ajudantes" type="number" min="0" placeholder="Ajudantes" value="0">
+        <button>Adicionar (já aprovado)</button>
+      </form>
+    </section>
+    <section id="tab-precos" class="card esconde"></section>
+  </div>
+</main>
+<script type="module">
+import { $, $$, api, esc, reais, dataHora, dadosDoForm, mostrarErro } from '/comum.js';
+let senha = sessionStorage.getItem('senha') || '';
+const adm = (url, opts = {}) => api(`/api/admin${url}`, { ...opts, headers: { 'x-admin-senha': senha } });
+
+$('#login').addEventListener('submit', async (e) => {
+  e.preventDefault(); senha = $('#senha').value;
+  try { await iniciar(); sessionStorage.setItem('senha', senha); } catch (err) { mostrarErro($('#erro-login'), err.message); }
+});
+
+async function iniciar() {
+  await carregar();
+  $('#login').classList.add('esconde'); $('#painel').classList.remove('esconde');
+  const meta = await api('/api/meta');
+  $('#sel-veiculo').innerHTML = Object.entries(meta.veiculos).map(([k, v]) => `<option value="${k}">${esc(v.nome)}</option>`).join('');
+  setInterval(carregar, 10000);
+}
+
+async function carregar() {
+  const [r, pedidos, freteiros] = await Promise.all([adm('/resumo'), adm('/pedidos'), adm('/freteiros')]);
+  const s = r.porStatus;
+  $('#kpis').innerHTML = [
+    [(s.aberto || 0) + (s.aguardando_escolha || 0), 'pedidos em andamento'],
+    [r.fechados, 'fretes fechados'],
+    [reais(r.gmv), 'movimentado (GMV)'],
+    [reais(r.comissaoEstimada), `comissão (${r.comissaoPercentual}%)`],
+    [r.mediaOfertasPorPedido, 'ofertas por pedido'],
+    [`${r.freteiros.ativos || 0} / ${r.freteiros.aprovados || 0}`, 'freteiros ativos / aprovados'],
+    [r.freteiros.pendentes || 0, 'cadastros p/ aprovar'],
+    [`${r.ia ? 'IA ligada' : 'IA desligada'}`, `WhatsApp: ${r.whatsapp}`],
+  ].map(([v, l]) => `<div class="kpi"><b>${esc(v)}</b><span>${esc(l)}</span></div>`).join('');
+
+  $('#tab-pedidos').innerHTML = `<table><thead><tr><th>#</th><th>Pedido</th><th>Cliente</th><th>Status</th><th>Ofertas</th><th></th></tr></thead><tbody>
+    ${pedidos.map((p) => `<tr>
+      <td><b>${p.codigo}</b><br><small>${dataHora(p.criado_em.replace(' ', 'T') + 'Z')}</small></td>
+      <td>${esc(p.tipo_nome)}<br><small>${esc(p.origem_bairro)} → ${esc(p.destino_bairro || '')} ${esc(p.destino_cidade)} · ${p.quando === 'imediato' ? '⚡ agora' : dataHora(p.data_hora)}</small></td>
+      <td>${esc(p.cliente_nome)}${p.empresa ? `<br><small>🏢 ${esc(p.empresa)}</small>` : ''}</td>
+      <td><span class="status ${p.status}">${esc(p.status_nome)}</span>${p.nota ? `<br>${'⭐'.repeat(p.nota)}` : ''}</td>
+      <td>${p.ofertas.map((o) => `<div>${o.posicao ? `<b>${o.posicao}º</b> ` : ''}${reais(o.valor)} · ${esc(o.freteiro.nome)} ${o.score != null ? `<small>(${o.score})</small>` : ''} ${o.status === 'escolhida' ? '✅' : ''}</div>`).join('') || '<small>—</small>'}</td>
+      <td>${p.status === 'aberto' ? `<button class="peq" data-fechar="${p.id}">Fechar agora</button>` : ''}
+          ${!['concluido', 'cancelado'].includes(p.status) ? `<button class="peq perigo" data-cancelar="${p.id}">Cancelar</button>` : ''}
+          <a class="peq" href="/p/${p.token}" target="_blank">ver</a></td></tr>`).join('')}
+  </tbody></table>`;
+
+  $('#lista-freteiros').innerHTML = `<table><thead><tr><th>Nome</th><th>WhatsApp</th><th>Veículo</th><th>Nota</th><th>Serviços</th><th>Status</th><th></th></tr></thead><tbody>
+    ${freteiros.map((f) => `<tr>
+      <td>${esc(f.nome)}${f.placa ? `<br><small>${esc(f.placa)}</small>` : ''}</td>
+      <td><a href="https://wa.me/${f.telefone}" target="_blank">${esc(f.telefone_fmt)}</a></td>
+      <td>${esc(f.veiculo_nome)}<br><small>${f.ajudantes} ajud.${f.faz_montagem ? ' · montagem' : ''}</small></td>
+      <td>${f.avaliacoes ? `⭐ ${(f.nota_soma / f.avaliacoes).toFixed(1)} (${f.avaliacoes})` : '—'}</td>
+      <td>${f.concluidos}${f.cancelamentos ? ` <small style="color:var(--danger)">(${f.cancelamentos} canc.)</small>` : ''}</td>
+      <td>${!f.aprovado ? '<span class="status aberto">Pendente</span>' : f.ativo ? '<span class="status">Ativo</span>' : '<span class="status cancelado">Pausado</span>'}</td>
+      <td>${!f.aprovado ? `<button class="peq" data-aprovar="${f.id}">Aprovar</button>` : `<button class="peq sec" data-ativo="${f.id}" data-v="${f.ativo ? 0 : 1}">${f.ativo ? 'Pausar' : 'Ativar'}</button>`}</td></tr>`).join('')}
+  </tbody></table>`;
+
+  $('#tab-precos').innerHTML = `<h2>Ofertas reais × estimativa</h2><p class="sub">Use para calibrar a tabela em <code>src/precos.js</code>.</p>
+    <table><thead><tr><th>Carga</th><th>Média das ofertas</th><th>Média da estimativa</th><th>Ofertas</th></tr></thead><tbody>
+    ${r.precoMedio.map((x) => `<tr><td>${esc(x.volume)}</td><td>${reais(x.media)}</td><td>${reais(x.estimativa)}</td><td>${x.n}</td></tr>`).join('') || '<tr><td colspan="4">Sem dados ainda</td></tr>'}</tbody></table>`;
+}
+
+document.addEventListener('click', async (e) => {
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.dataset.tab) {
+    $$('.tabs button').forEach((x) => x.classList.toggle('on', x === b));
+    ['pedidos', 'freteiros', 'precos'].forEach((t) => $(`#tab-${t}`).classList.toggle('esconde', t !== b.dataset.tab));
+    return;
+  }
+  try {
+    if (b.dataset.fechar) await adm(`/pedidos/${b.dataset.fechar}/fechar`, { method: 'POST' });
+    else if (b.dataset.cancelar) { if (!confirm('Cancelar pedido?')) return; await adm(`/pedidos/${b.dataset.cancelar}/cancelar`, { method: 'POST', body: {} }); }
+    else if (b.dataset.aprovar) await adm(`/freteiros/${b.dataset.aprovar}/aprovar`, { method: 'POST' });
+    else if (b.dataset.ativo) await adm(`/freteiros/${b.dataset.ativo}/ativo`, { method: 'POST', body: { ativo: b.dataset.v === '1' } });
+    else return;
+    carregar();
+  } catch (err) { alert(err.message); }
+});
+
+$('#novo-freteiro').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  try { await adm('/freteiros', { method: 'POST', body: dadosDoForm(e.target) }); e.target.reset(); carregar(); } catch (err) { alert(err.message); }
+});
+
+if (senha) iniciar().catch(() => sessionStorage.removeItem('senha'));
+</script>
+</body>
+</html>

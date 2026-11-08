@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seja freteiro parceiro — MudaJá</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap"><a class="logo" href="/">Muda<span>Já</span></a><nav><a href="/">Pedir frete</a></nav></div></header>
+<main class="wrap">
+  <section class="hero">
+    <h1>Receba fretes de Jaraguá direto no seu WhatsApp.</h1>
+    <p>Sem mensalidade. Você recebe o pedido, manda seu preço e horário respondendo a mensagem. Se o cliente escolher você, mandamos o contato dele na hora.</p>
+    <div class="passos">
+      <div class="passo"><b>📲</b>Pedido chega no WhatsApp com bairro, itens e horário</div>
+      <div class="passo"><b>💬</b>Responda: <i>#K7QP 350, chego em 30 min</i></div>
+      <div class="passo"><b>🏆</b>Melhor preço + horário + avaliação ganha</div>
+    </div>
+  </section>
+
+  <form id="form" class="card" novalidate>
+    <h2>Cadastro de freteiro</h2>
+    <p class="sub">A gente confere seus dados e aprova em até 1 dia útil.</p>
+    <div class="row">
+      <div><label for="nome">Nome completo</label><input id="nome" name="nome" required autocomplete="name"></div>
+      <div><label for="telefone">WhatsApp</label><input id="telefone" name="telefone" type="tel" inputmode="tel" required placeholder="(47) 99999-9999"></div>
+    </div>
+    <label for="veiculo">Veículo</label><select id="veiculo" name="veiculo" required></select>
+    <div class="row">
+      <div><label for="placa">Placa</label><input id="placa" name="placa" maxlength="8" style="text-transform:uppercase"></div>
+      <div><label for="ajudantes">Ajudantes que você leva</label>
+        <select id="ajudantes" name="ajudantes"><option value="0">Nenhum</option><option value="1">1</option><option value="2">2</option><option value="3">3 ou mais</option></select></div>
+    </div>
+    <label class="check"><input type="checkbox" name="faz_montagem"> Faço desmontagem/montagem de móveis</label>
+    <label class="check"><input type="checkbox" name="atende_empresas" checked> Atendo empresas (entregas, coletas, mudanças comerciais)</label>
+
+    <h3>Onde você pega frete?</h3>
+    <p class="sub">Deixe "Toda a cidade" ou escolha os bairros de retirada.</p>
+    <div class="chips" id="regioes"></div>
+
+    <label class="check" style="margin-top:20px"><input type="checkbox" name="aceite" required>
+      <span>Concordo em manter preço e horário das ofertas que enviar, e que meus dados e avaliações sejam mostrados aos clientes.</span></label>
+    <div class="erro" id="erro"></div>
+    <button class="full" type="submit" id="enviar">Quero receber pedidos</button>
+  </form>
+  <div id="sucesso" class="card esconde"><h2>✅ Cadastro enviado!</h2><p>Assim que aprovarmos, você recebe uma mensagem no WhatsApp e já começa a receber pedidos.</p></div>
+</main>
+<script type="module">
+import { $, api, esc, dadosDoForm, mostrarErro } from '/comum.js';
+const meta = await api('/api/meta');
+$('#veiculo').innerHTML = Object.entries(meta.veiculos).map(([k, v]) => `<option value="${k}">${esc(v.nome)}</option>`).join('');
+$('#regioes').innerHTML = `<label class="chip"><input type="checkbox" data-multi name="regioes" value="Todas" checked><span>Toda a cidade</span></label>` +
+  meta.bairros.filter((b) => b !== 'Outro').map((b) => `<label class="chip"><input type="checkbox" data-multi name="regioes" value="${esc(b)}"><span>${esc(b)}</span></label>`).join('');
+$('#regioes').addEventListener('change', (e) => {
+  const todas = $('#regioes input[value="Todas"]');
+  if (e.target === todas && todas.checked) $('#regioes').querySelectorAll('input:not([value="Todas"])').forEach((i) => (i.checked = false));
+  else if (e.target.checked) todas.checked = false;
+});
+$('#form').addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  mostrarErro($('#erro'), '');
+  try {
+    await api('/api/freteiros', { method: 'POST', body: dadosDoForm($('#form')) });
+    $('#form').classList.add('esconde'); $('#sucesso').classList.remove('esconde');
+  } catch (e) { mostrarErro($('#erro'), e.message); }
+});
+</script>
+</body>
+</html>

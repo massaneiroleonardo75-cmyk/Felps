@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MudaJá — Fretes e mudanças em Jaraguá do Sul</title>
+  <meta name="description" content="Peça um frete ou mudança em Jaraguá do Sul e receba as 3 melhores ofertas de freteiros da cidade no seu WhatsApp.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <a class="logo" href="/">Muda<span>Já</span></a>
+  <nav><a href="/freteiro">Sou freteiro</a></nav>
+</div></header>
+
+<main class="wrap">
+  <section class="hero">
+    <h1>Frete e mudança em Jaraguá do Sul, sem ligar pra ninguém.</h1>
+    <p>Conte o que precisa levar. Os freteiros da cidade mandam ofertas e você recebe as <b>3 melhores</b> no WhatsApp, com preço e horário.</p>
+    <div class="passos">
+      <div class="passo"><b>1</b>Você descreve o frete (2 minutos)</div>
+      <div class="passo"><b>2</b>Freteiros mandam valor e horário</div>
+      <div class="passo"><b>3</b>A IA separa as 3 melhores e você escolhe</div>
+    </div>
+  </section>
+
+  <form id="form" class="card" novalidate>
+    <h2>Pedir orçamento</h2>
+    <p class="sub">Grátis e sem compromisso. Seus dados só vão para o freteiro que você escolher.</p>
+
+    <h3>O que você precisa?</h3>
+    <div class="chips" id="tipos"></div>
+
+    <h3>Tamanho da carga</h3>
+    <div class="opcoes-grandes" id="volumes"></div>
+    <label for="itens">O que vai ser levado?</label>
+    <textarea id="itens" name="itens" required placeholder="Ex: geladeira, fogão, cama de casal, guarda-roupa 6 portas, umas 15 caixas"></textarea>
+
+    <h3>Retirada</h3>
+    <div class="row">
+      <div><label for="origem_bairro">Bairro (Jaraguá do Sul)</label><select id="origem_bairro" name="origem_bairro" required></select></div>
+      <div><label for="origem_endereco">Rua e número <small>(só o escolhido vê)</small></label><input id="origem_endereco" name="origem_endereco" autocomplete="street-address"></div>
+    </div>
+    <div class="row">
+      <div><label for="origem_andar">Andar</label><input id="origem_andar" name="origem_andar" type="number" min="0" max="30" value="0" inputmode="numeric"></div>
+      <div><label class="check"><input type="checkbox" name="origem_elevador"> Tem elevador</label></div>
+    </div>
+
+    <h3>Entrega</h3>
+    <div class="row">
+      <div><label for="destino_cidade">Cidade</label><select id="destino_cidade" name="destino_cidade" required></select></div>
+      <div><label for="destino_bairro">Bairro</label><input id="destino_bairro" name="destino_bairro" list="lista-bairros"><datalist id="lista-bairros"></datalist></div>
+    </div>
+    <div class="row">
+      <div><label for="destino_endereco">Rua e número <small>(só o escolhido vê)</small></label><input id="destino_endereco" name="destino_endereco"></div>
+      <div class="row">
+        <div><label for="destino_andar">Andar</label><input id="destino_andar" name="destino_andar" type="number" min="0" max="30" value="0" inputmode="numeric"></div>
+        <div><label class="check" style="margin-top:40px"><input type="checkbox" name="destino_elevador"> Elevador</label></div>
+      </div>
+    </div>
+
+    <h3>Quando?</h3>
+    <div class="opcoes-grandes">
+      <label class="chip"><input type="radio" name="quando" value="imediato" checked><span>⚡ Agora<small>ofertas em ~<b id="janela-imediato">10</b> min</small></span></label>
+      <label class="chip"><input type="radio" name="quando" value="agendado"><span>📅 Agendar<small>escolha dia e hora</small></span></label>
+    </div>
+    <div id="bloco-data" class="esconde"><label for="data_hora">Dia e horário</label><input id="data_hora" name="data_hora" type="datetime-local"></div>
+
+    <h3>Extras</h3>
+    <div class="row">
+      <div><label for="ajudantes">Ajudantes para carregar</label>
+        <select id="ajudantes" name="ajudantes"><option value="0">Nenhum, eu ajudo</option><option value="1">1 ajudante</option><option value="2">2 ajudantes</option><option value="3">3 ajudantes</option><option value="4">4 ajudantes</option></select></div>
+      <div><label class="check" style="margin-top:40px"><input type="checkbox" name="montagem"> Desmontar / montar móveis</label></div>
+    </div>
+    <label for="observacoes">Observações</label>
+    <input id="observacoes" name="observacoes" placeholder="Ex: rua estreita, caminhão grande não entra; tem piano">
+
+    <h3>Seus dados</h3>
+    <div class="chips" style="margin-bottom:4px">
+      <label class="chip"><input type="radio" name="cliente_tipo" value="pf" checked><span>Pessoa física</span></label>
+      <label class="chip"><input type="radio" name="cliente_tipo" value="pj"><span>🏢 Empresa</span></label>
+    </div>
+    <div id="bloco-empresa" class="esconde"><label for="empresa">Nome da empresa</label><input id="empresa" name="empresa" autocomplete="organization"></div>
+    <div class="row">
+      <div><label for="cliente_nome">Seu nome</label><input id="cliente_nome" name="cliente_nome" required autocomplete="name"></div>
+      <div><label for="cliente_telefone">WhatsApp</label><input id="cliente_telefone" name="cliente_telefone" required type="tel" inputmode="tel" placeholder="(47) 99999-9999" autocomplete="tel"></div>
+    </div>
+
+    <div class="estimativa" id="estimativa">
+      <div><small>Estimativa para esse frete</small><b id="est-valor">—</b></div>
+      <small style="text-align:right">O valor final vem<br>das ofertas dos freteiros</small>
+    </div>
+    <div class="erro" id="erro"></div>
+    <button class="full" id="enviar" type="submit">Receber ofertas no WhatsApp</button>
+  </form>
+</main>
+<footer>MudaJá · Jaraguá do Sul, SC · Conectamos você a freteiros autônomos da região.</footer>
+
+<script type="module">
+import { $, $$, api, reais, esc, dadosDoForm, mostrarErro, opcoes } from '/comum.js';
+
+const meta = await api('/api/meta');
+$('#janela-imediato').textContent = meta.janelaImediatoMin;
+$('#tipos').innerHTML = Object.entries(meta.tipos)
+  .map(([k, v], i) => `<label class="chip"><input type="radio" name="tipo" value="${k}" ${i === 0 ? 'checked' : ''}><span>${esc(v)}</span></label>`).join('');
+$('#volumes').innerHTML = Object.entries(meta.volumes)
+  .map(([k, v]) => `<label class="chip"><input type="radio" name="volume" value="${k}" ${k === 'medio' ? 'checked' : ''}><span>${esc(v.nome)}<small>${esc(v.exemplo)}</small></span></label>`).join('');
+$('#origem_bairro').innerHTML = '<option value="">Selecione…</option>' + opcoes(meta.bairros);
+$('#destino_cidade').innerHTML = opcoes(meta.cidades, 'Jaraguá do Sul');
+$('#lista-bairros').innerHTML = meta.bairros.map((b) => `<option value="${esc(b)}">`).join('');
+
+const form = $('#form');
+// Data mínima = agora
+const agora = new Date(Date.now() - new Date().getTimezoneOffset() * 60000);
+$('#data_hora').min = agora.toISOString().slice(0, 16);
+
+function atualizarVisibilidade() {
+  const d = dadosDoForm(form);
+  $('#bloco-data').classList.toggle('esconde', d.quando !== 'agendado');
+  $('#bloco-empresa').classList.toggle('esconde', d.cliente_tipo !== 'pj');
+}
+
+let t;
+async function atualizarEstimativa() {
+  clearTimeout(t);
+  t = setTimeout(async () => {
+    const d = dadosDoForm(form);
+    const e = await api('/api/estimativa', { method: 'POST', body: d }).catch(() => null);
+    if (e) $('#est-valor').textContent = `${reais(e.min)} a ${reais(e.max)}`;
+  }, 200);
+}
+form.addEventListener('input', () => { atualizarVisibilidade(); atualizarEstimativa(); });
+form.addEventListener('change', () => { atualizarVisibilidade(); atualizarEstimativa(); });
+atualizarEstimativa();
+
+form.addEventListener('submit', async (ev) => {
+  ev.preventDefault();
+  mostrarErro($('#erro'), '');
+  const btn = $('#enviar');
+  btn.disabled = true; btn.textContent = 'Enviando…';
+  try {
+    const r = await api('/api/pedidos', { method: 'POST', body: dadosDoForm(form) });
+    location.href = `/p/${r.token}`;
+  } catch (e) {
+    mostrarErro($('#erro'), e.message);
+    btn.disabled = false; btn.textContent = 'Receber ofertas no WhatsApp';
+  }
+});
+</script>
+</body>
+</html>

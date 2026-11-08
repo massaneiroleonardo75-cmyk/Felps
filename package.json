@@ -1,0 +1,23 @@
+{
+  "name": "mudaja",
+  "version": "0.1.0",
+  "description": "Marketplace de fretes e mudanças em Jaraguá do Sul: freteiros recebem pedidos pelo WhatsApp, mandam ofertas e a IA seleciona as 3 melhores para o cliente.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "seed": "node --disable-warning=ExperimentalWarning src/seed.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  }
+}

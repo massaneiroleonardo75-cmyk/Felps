@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Seu pedido — MudaJá</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top"><div class="wrap"><a class="logo" href="/">Muda<span>Já</span></a><span id="cod" class="status"></span></div></header>
+<main class="wrap" id="app"><div class="card espera">Carregando…</div></main>
+
+<script type="module">
+import { $, api, reais, esc, dataHora, hora, quandoOferta } from '/comum.js';
+const token = location.pathname.split('/').pop();
+let estado, timer;
+
+async function carregar() {
+  try { estado = await api(`/api/pedidos/${token}`); render(); }
+  catch (e) { $('#app').innerHTML = `<div class="card erro on">${esc(e.message)}</div>`; return; }
+  clearTimeout(timer);
+  if (['aberto', 'fechando', 'aguardando_escolha'].includes(estado.status)) timer = setTimeout(carregar, estado.status === 'aguardando_escolha' ? 15000 : 5000);
+}
+
+function resumo(p) {
+  return `<div class="card"><h3 style="margin-top:0">Seu pedido</h3><dl class="info">
+    <dt>Serviço</dt><dd>${esc(p.tipo)} · ${esc(p.volume)}</dd>
+    <dt>De → Para</dt><dd>${esc(p.origem)} → ${esc(p.destino)}</dd>
+    <dt>Quando</dt><dd>${p.quando === 'imediato' ? '⚡ Agora' : dataHora(p.data_hora)}</dd>
+    <dt>Itens</dt><dd>${esc(p.itens)}</dd>
+    <dt>Ajudantes</dt><dd>${p.ajudantes || 'Nenhum'}</dd>
+    <dt>Estimativa</dt><dd>${reais(p.estimativa_min)} a ${reais(p.estimativa_max)}</dd>
+  </dl>
+  ${['aberto', 'aguardando_escolha', 'sem_ofertas'].includes(p.status) ? '<button class="perigo peq" id="cancelar" style="margin-top:14px">Cancelar pedido</button>' : ''}
+  </div>`;
+}
+
+function cardOferta(o, p) {
+  const escolhida = p.oferta_escolhida_id === o.id;
+  const f = o.freteiro;
+  const nota = f.nota ? `⭐ ${f.nota.toFixed(1)} (${f.avaliacoes} avaliações)` : '🆕 Novo na plataforma';
+  return `<div class="oferta ${o.posicao === 1 ? 'primeira' : ''}">
+    <div class="topo"><div class="valor">${reais(o.valor)}</div><div class="quem">Opção ${o.posicao}</div></div>
+    <div class="selos">${o.selos.map((s, i) => `<span class="selo ${i ? 'amarelo' : ''}">${esc(s)}</span>`).join('')}</div>
+    <div><b>${esc(f.nome_completo || f.nome)}</b> · <span class="quem">${nota} · ${f.concluidos} serviços</span></div>
+    <ul>
+      <li>🕒 ${esc(quandoOferta(o))}</li>
+      <li>🚚 ${esc(o.veiculo)}</li>
+      <li>💪 ${o.ajudantes} ajudante(s)</li>
+      ${o.observacoes ? `<li>📝 ${esc(o.observacoes)}</li>` : ''}
+    </ul>
+    ${o.motivo ? `<div class="motivo">💡 ${esc(o.motivo)}</div>` : ''}
+    ${o.alertas.slice(0, 2).map((a) => `<div class="alerta">⚠️ ${esc(a)}</div>`).join('')}
+    ${p.status === 'aguardando_escolha' ? `<button class="full" data-escolher="${o.id}" style="margin-top:10px">Escolher ${esc(f.nome)} por ${reais(o.valor)}</button>` : ''}
+    ${escolhida && f.telefone ? `<div class="ok"><b>✅ Escolhido!</b><br>📞 ${esc(f.telefone_fmt)}${f.placa ? ` · placa ${esc(f.placa)}` : ''}<br>
+      <a class="btn" style="margin-top:10px" href="https://wa.me/${f.telefone}?text=${encodeURIComponent(`Oi ${f.nome}! Sou o cliente do pedido #${p.codigo} do MudaJá.`)}" target="_blank" rel="noopener">Chamar no WhatsApp</a></div>` : ''}
+  </div>`;
+}
+
+function render() {
+  const p = estado;
+  $('#cod').textContent = `#${p.codigo}`;
+  let topo = '';
+  if (p.status === 'aberto' || p.status === 'fechando') {
+    const faltam = Math.max(0, Math.round((new Date(p.prazo_ofertas) - Date.now()) / 60000));
+    topo = `<div class="card espera">
+      <div><span class="pulso"></span><b>Recebendo ofertas dos freteiros</b></div>
+      <div class="grande">${p.ofertas_recebidas}</div><div class="sub">oferta(s) recebida(s) até agora</div>
+      <p class="sub">${p.status === 'fechando' ? 'Selecionando as melhores…' : `Às <b>${hora(p.prazo_ofertas)}</b> (em ~${faltam} min) mandamos as 3 melhores no seu WhatsApp e aqui.`}</p>
+    </div>`;
+  } else if (p.status === 'aguardando_escolha') {
+    topo = `<div class="card"><h2>🎯 Suas 3 melhores ofertas</h2><p class="sub">${esc(p.resumo_ia || '')}</p>
+      ${p.opcoes.map((o) => cardOferta(o, p)).join('')}
+      <p class="sub">Você também pode responder 1, 2 ou 3 no WhatsApp.</p></div>`;
+  } else if (p.status === 'confirmado' || p.status === 'concluido') {
+    const o = p.opcoes.find((x) => x.id === p.oferta_escolhida_id);
+    topo = `<div class="card"><h2>🎉 Frete confirmado</h2><p class="sub">Combine os detalhes direto com o freteiro.</p>${o ? cardOferta(o, p) : ''}
+      ${p.nota ? `<div class="ok">Obrigado pela avaliação: ${'⭐'.repeat(p.nota)}</div>` : `
+      <h3>Como foi o serviço?</h3><div class="estrelas">${[1,2,3,4,5].map((n) => `<button data-nota="${n}">★</button>`).join('')}</div>
+      <input id="comentario" placeholder="Comentário (opcional)">`}
+    </div>`;
+  } else if (p.status === 'sem_ofertas') {
+    topo = `<div class="card"><h2>Ainda sem ofertas 😕</h2><p class="sub">Nenhum freteiro respondeu a tempo. Nossa equipe vai procurar alguém e te chama no WhatsApp.</p></div>`;
+  } else if (p.status === 'cancelado') {
+    topo = `<div class="card"><h2>Pedido cancelado</h2><a class="btn" href="/">Fazer novo pedido</a></div>`;
+  }
+  $('#app').innerHTML = topo + resumo(p);
+}
+
+document.addEventListener('click', async (ev) => {
+  const b = ev.target.closest('button');
+  if (!b) return;
+  try {
+    if (b.dataset.escolher) {
+      b.disabled = true;
+      estado = await api(`/api/pedidos/${token}/escolher`, { method: 'POST', body: { oferta_id: Number(b.dataset.escolher) } });
+    } else if (b.dataset.nota) {
+      estado = await api(`/api/pedidos/${token}/avaliar`, { method: 'POST', body: { nota: Number(b.dataset.nota), comentario: $('#comentario')?.value } });
+    } else if (b.id === 'cancelar') {
+      if (!confirm('Cancelar este pedido?')) return;
+      estado = await api(`/api/pedidos/${token}/cancelar`, { method: 'POST' });
+    } else return;
+    render();
+  } catch (e) { alert(e.message); b.disabled = false; }
+});
+
+carregar();
+</script>
+</body>
+</html>
