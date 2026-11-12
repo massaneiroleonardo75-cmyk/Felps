@@ -1,6 +1,7 @@
 // Junta o site num único arquivo HTML para publicar como Artifact no claude.ai.
 // Uso: node artifact/build.mjs  ->  artifact/notas-giba.html
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -48,3 +49,40 @@ ${js}
 `;
 writeFileSync(join(aqui, 'notas-giba.html'), html);
 console.log(`artifact/notas-giba.html: ${(html.length / 1024).toFixed(0)} KB`);
+
+// ---------- versão de link aberto (GitHub Pages): ../docs ----------
+const docs = join(raiz, '..', 'docs');
+mkdirSync(join(docs, 'vendor', 'pdfjs'), { recursive: true });
+// kit oficial do Claude embutido (sem depender de CDN)
+execFileSync(join(raiz, 'node_modules', '.bin', 'esbuild'), [join(raiz, 'web', 'sdk-entrada.js'), '--bundle', '--minify', '--format=iife', '--platform=browser', '--target=es2020', `--outfile=${join(docs, 'vendor', 'anthropic.js')}`], { stdio: 'inherit' });
+for (const f of ['pdf.min.js', 'pdf.worker.min.js']) copyFileSync(join(raiz, 'node_modules', 'pdfjs-dist', 'build', f), join(docs, 'vendor', 'pdfjs', f));
+copyFileSync(join(raiz, 'public', 'icone.svg'), join(docs, 'icone.svg'));
+writeFileSync(join(docs, '.nojekyll'), '');
+writeFileSync(
+  join(docs, 'manifest.webmanifest'),
+  JSON.stringify({ name: 'Notas do Giba', short_name: 'Notas Giba', start_url: './', display: 'standalone', background_color: '#f4f6f5', theme_color: '#0f7a5c', lang: 'pt-BR', icons: [{ src: 'icone.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] }, null, 2),
+);
+const corte = html.indexOf('<div id="raiz">');
+const cabeca = html.slice(0, corte).replace('<meta name="claude:viewport-fit-sides" content="cover">\n', '').replace('<meta name="theme-color" content="#0f7a5c">\n', '');
+const corpo = html.slice(corte).replace('<script>', `<script src="vendor/anthropic.js"></script>\n<script>window.__PDFJS_BASE = "vendor/pdfjs/";</script>\n<script>\n${ler('web/local.js')}\n</script>\n<script>`);
+const web = `<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Notas fiscais, preço de venda e encomendas dos clientes, com aviso pronto no WhatsApp.">
+<meta name="theme-color" content="#0f7a5c">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Notas do Giba">
+<meta name="robots" content="noindex">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icone.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="icone.svg">
+${cabeca}<style>html{padding-top:env(safe-area-inset-top,0px)}body{margin:0}</style>
+</head>
+<body>
+${corpo}</body>
+</html>
+`;
+writeFileSync(join(docs, 'index.html'), web);
+console.log(`docs/index.html: ${(web.length / 1024).toFixed(0)} KB`);

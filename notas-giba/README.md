@@ -85,3 +85,20 @@ O site está publicado como uma página do claude.ai, sem servidor próprio:
 
 O arquivo publicado é gerado por `node artifact/build.mjs` a partir de `public/calc.js`, `public/combinar.js`,
 `src/nfe-xml.js`, `public/style.css`, `artifact/extra.css` e `artifact/app.js`.
+
+## Versão de link aberto (GitHub Pages, grátis, sem login)
+
+A pasta `docs/` (na raiz do repositório) é o site completo, que roda sozinho no navegador:
+
+- Abre em qualquer computador ou celular, sem conta e sem Claude.
+- Os dados ficam guardados **no próprio navegador** (IndexedDB) e continuam lá depois de fechar ou desligar o computador.
+  Cada aparelho guarda os seus; para passar para outro aparelho ou ter cópia de segurança, use **Ajustes → Baixar/Restaurar backup**.
+- A leitura automática de fotos usa a API do Claude com uma chave colocada em **Ajustes** (fica só naquele aparelho).
+  Sem chave, funcionam o XML da NF-e e a nota digitada.
+- Tudo embutido (kit do Claude e leitor de PDF em `docs/vendor/`), sem depender de CDN.
+
+Para ativar o link (uma vez): no GitHub, **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
+escolha a branch `claude/invoice-management-system-s7wtyz` e a pasta **/docs**, e clique em **Save**.
+O endereço fica `https://massaneiroleonardo75-cmyk.github.io/Felps/`.
+
+Para regerar: `cd notas-giba && npm install && node artifact/build.mjs`.

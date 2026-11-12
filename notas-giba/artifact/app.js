@@ -38,6 +38,9 @@ const debounce = (fn, ms) => {
   };
 };
 const novoId = () => Math.random().toString(36).slice(2, 10);
+// Versão de link aberto (GitHub Pages): dados no próprio navegador, leitura de foto com a chave da API.
+const LOCAL = window.__NOTAS_LOCAL || null;
+const srcArquivo = (id) => (LOCAL ? LOCAL.url(id) : `/_blob/${id}`);
 
 const P = {
   camera: '<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3.5"/>',
@@ -467,10 +470,13 @@ const MSG_SAMPLE = {
   upstream_error: 'O serviço de leitura não respondeu. Tente de novo em instantes.',
   queue_overflow: 'Muitas leituras ao mesmo tempo. Espere um pouco.',
   cancelled: 'Leitura cancelada.',
+  chave_invalida: 'A chave da API do Claude não foi aceita. Confira em Ajustes.',
+  pedido_recusado: 'A API do Claude recusou o pedido. Confira se a conta da API tem créditos (console.anthropic.com).',
+  sem_internet: 'Sem internet para ler a foto. Tente de novo quando conectar.',
 };
 
 async function lerNotaPorFoto(blobs) {
-  if (!S.sample) throw new ErroUsuario('A leitura por foto não está disponível aqui. Abra pelo claude.ai com a sua conta, ou digite a nota.');
+  if (!S.sample) throw new ErroUsuario(LOCAL ? 'Para ler fotos, coloque a chave da API do Claude em Ajustes. Enquanto isso, envie o XML ou digite a nota.' : 'A leitura por foto não está disponível aqui. Abra pelo claude.ai com a sua conta, ou digite a nota.');
   const pend = pendentes().map((e) => `id ${e.id}: ${e.produto} (qtd ${e.quantidade}) — cliente ${S.contatos.get(e.contato_id)?.nome || '?'}`);
   const tiers = S.limites?.modelTiers;
   const modelTier = !tiers || tiers.includes('complex') ? 'complex' : 'default';
@@ -531,7 +537,7 @@ async function lerNotaPorFoto(blobs) {
 // PDF → imagens (pdf.js carregado só quando precisa)
 let pdfjsPromessa;
 function carregarPdfJs() {
-  const base = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
+  const base = window.__PDFJS_BASE || 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/';
   const script = (src) =>
     new Promise((ok, erro) => {
       const s = document.createElement('script');
@@ -546,7 +552,7 @@ function carregarPdfJs() {
 
 async function pdfParaImagens(file, max = 4) {
   const pdfjs = await carregarPdfJs();
-  pdfjs.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+  pdfjs.GlobalWorkerOptions.workerSrc = (window.__PDFJS_BASE || 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/') + 'pdf.worker.min.js';
   const doc = await pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) }).promise;
   const paginas = [];
   for (let p = 1; p <= Math.min(doc.numPages, max); p++) {
@@ -997,7 +1003,7 @@ function paginaEnviar(pag) {
   const semIA = !S.sample;
   pag.innerHTML = `
     <div class="cabecalho"><div><h1>Enviar nota fiscal</h1><p class="sub">Tire uma foto da nota (ou mande o PDF/XML). Se a nota tiver mais de uma página, adicione todas.</p></div></div>
-    ${semIA ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Leitura de fotos indisponível nesta tela.</strong> Abra o site pelo claude.ai com a sua conta para a leitura automática. Enquanto isso, envie o <b>XML</b> da nota ou <a href="#nova-nota">digite a nota</a>.</div></div>` : ''}
+    ${semIA ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Leitura automática de fotos desligada.</strong> ${LOCAL ? 'Para ligar, coloque a chave da API do Claude em <a href="#ajustes">Ajustes</a>.' : 'Abra o site pelo claude.ai com a sua conta para a leitura automática.'} Enquanto isso, envie o <b>XML</b> da nota ou <a href="#nova-nota">digite a nota</a>.</div></div>` : ''}
     <div class="zona-envio" id="zona">
       <div class="ic-grande">${ic('camera')}</div>
       <h2>Fotografe a nota fiscal</h2>
@@ -1244,7 +1250,7 @@ function paginaNota(pag, id) {
           <input type="checkbox" id="ratear" ${nota.ratear_despesas ? 'checked' : ''} />
           <span>Incluir frete/impostos no custo <span class="tiny bloco">${Math.abs(despesas) >= 0.01 ? `${despesas > 0 ? '+' : '−'}${R(Math.abs(despesas))} além dos produtos` : 'nota sem despesas extras'}</span></span>
         </label>
-        ${(nota.arquivos || []).length ? `<div class="foto-nota">${nota.arquivos.map((a) => `<button data-ver="/_blob/${esc(a.asset_id)}" aria-label="Ver foto da nota"><img src="/_blob/${esc(a.asset_id)}" alt="Foto da nota" loading="lazy"></button>`).join('')}</div>` : ''}
+        ${(nota.arquivos || []).filter((a) => srcArquivo(a.asset_id)).length ? `<div class="foto-nota">${nota.arquivos.filter((a) => srcArquivo(a.asset_id)).map((a) => `<button data-ver="${esc(srcArquivo(a.asset_id))}" aria-label="Ver foto da nota"><img src="${esc(srcArquivo(a.asset_id))}" alt="Foto da nota" loading="lazy"></button>`).join('')}</div>` : ''}
       </div>
 
       <div class="itens-tabela rolagem-x">
@@ -1918,12 +1924,12 @@ function paginaAjustes(pag) {
       </div>
       <div class="linha"><button class="btn primario grande" id="salvar">${ic('check')} Salvar ajustes</button></div>
     </form>
-    <div class="card pad secao largo-760">
+    ${LOCAL ? secaoLocal() : `<div class="card pad secao largo-760">
       <h2 class="mb-sm">Sobre este site</h2>
       <p class="small muted">${S.sample ? '✓ Leitura automática de fotos de notas ativa (usa o Claude da sua conta).' : '⚠ Leitura de fotos indisponível nesta tela. Abra pelo claude.ai com a sua conta.'}</p>
       <p class="small muted">Os dados ficam salvos com segurança e aparecem iguais no celular e no computador.</p>
       <p class="small muted">📱 No celular, use “Adicionar à tela de início” no navegador para abrir como aplicativo.</p>
-    </div>`;
+    </div>`}`;
   const f = $('#f-aj');
   const previa = () => {
     $('#previa').textContent = montarMensagem(f.mensagem.value, {
@@ -1941,6 +1947,7 @@ function paginaAjustes(pag) {
   f.onchange = previa;
   previa();
   $('#restaurar').onclick = () => ((f.mensagem.value = MENSAGEM_PADRAO), previa());
+  if (LOCAL) ligarSecaoLocal();
   f.onsubmit = (e) => {
     e.preventDefault();
     comBotao($('#salvar'), async () => {
@@ -1952,6 +1959,88 @@ function paginaAjustes(pag) {
   };
 }
 
+function secaoLocal() {
+  const temChave = Boolean(LOCAL.chave());
+  return `<div class="card pad secao largo-760" id="leitura">
+      <h2>Leitura automática de fotos</h2>
+      <p class="small muted mb-sm">Para o site ler a foto da nota sozinho, ele usa a inteligência artificial do Claude. Crie uma chave em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (paga por uso, alguns centavos por nota) e cole aqui. A chave fica guardada só neste aparelho.</p>
+      <div class="linha">
+        <label class="campo cresce" for="aj-chave">Chave da API do Claude
+          <input id="aj-chave" type="password" autocomplete="off" placeholder="${temChave ? '•••••••• chave guardada' : 'sk-ant-…'}" />
+        </label>
+      </div>
+      <div class="linha mt">
+        <button type="button" class="btn primario" id="salvar-chave">${ic('check', 'sm')} Salvar chave</button>
+        ${temChave ? `<button type="button" class="btn perigo" id="apagar-chave">${ic('lixo', 'sm')} Remover chave</button>` : ''}
+        <span class="small ${temChave ? 'lucro-pos' : 'muted'}">${temChave ? '✓ Leitura de fotos ligada' : 'Sem chave: use o XML da nota ou digite os itens.'}</span>
+      </div>
+    </div>
+    <div class="card pad secao largo-760">
+      <h2>Seus dados</h2>
+      <p class="small muted mb-sm">Tudo fica salvo neste navegador, mesmo depois de fechar ou desligar o computador. Cada aparelho guarda os próprios dados. Para levar para outro aparelho ou ter uma cópia de segurança, baixe o backup e abra no outro aparelho.</p>
+      <p class="small mb-sm" id="espaco"></p>
+      <div class="linha">
+        <button type="button" class="btn" id="baixar-backup">${ic('upload', 'sm')} Baixar backup</button>
+        <button type="button" class="btn" id="abrir-backup">${ic('folhas', 'sm')} Restaurar backup</button>
+        <input type="file" id="in-backup" accept="application/json,.json" hidden />
+      </div>
+      <p class="tiny mt">Dica: baixe um backup de vez em quando. Limpar os dados de navegação do navegador apaga as informações do site.</p>
+      <p class="small muted mt">📱 No celular, use “Adicionar à tela de início” no navegador para abrir como aplicativo.</p>
+    </div>`;
+}
+
+function ligarSecaoLocal() {
+  LOCAL.espaco().then((e) => {
+    const el = $('#espaco');
+    if (!el || !e) return;
+    const mb = (b) => `${(b / 1024 / 1024).toFixed(1).replace('.', ',')} MB`;
+    el.innerHTML = `${e.persistido ? '✓ Armazenamento permanente ativado.' : 'Armazenamento normal do navegador.'} Usando ${mb(e.usado)}${e.total ? ` de ${mb(e.total)} disponíveis` : ''}.`;
+  });
+  $('#salvar-chave').onclick = (ev) =>
+    comBotao(ev.currentTarget, async () => {
+      const chave = $('#aj-chave').value.trim();
+      if (!/^sk-ant-/.test(chave)) throw new ErroUsuario('A chave começa com "sk-ant-". Copie a chave inteira do console da Anthropic.');
+      LOCAL.salvarChave(chave);
+      S.sample = await window.claude.use('sample');
+      S.limites = S.sample ? await S.sample.limits() : null;
+      $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : '⚠ Leitura de fotos desligada';
+      toast('Chave salva. Leitura de fotos ligada ✓');
+      render();
+    });
+  $('#apagar-chave')?.addEventListener('click', async () => {
+    if (!(await confirmar('Remover a chave?', 'A leitura automática de fotos será desligada neste aparelho.', { botao: 'Remover', perigo: true }))) return;
+    LOCAL.salvarChave('');
+    S.sample = null;
+    $('#status-sistema').textContent = '⚠ Leitura de fotos desligada';
+    toast('Chave removida');
+    render();
+  });
+  $('#baixar-backup').onclick = (ev) =>
+    comBotao(ev.currentTarget, async () => {
+      const blob = await LOCAL.exportar();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `notas-giba-backup-${diaLocal(agoraISO())}.json`;
+      document.body.append(a);
+      a.click();
+      setTimeout(() => (URL.revokeObjectURL(a.href), a.remove()), 1000);
+      toast('Backup baixado ✓');
+    });
+  $('#abrir-backup').onclick = () => $('#in-backup').click();
+  $('#in-backup').onchange = async (ev) => {
+    const arq = ev.target.files[0];
+    ev.target.value = '';
+    if (!arq) return;
+    if (!(await confirmar('Restaurar este backup?', 'Os dados atuais deste aparelho serão substituídos pelos dados do backup.', { botao: 'Restaurar', perigo: true }))) return;
+    try {
+      const n = await LOCAL.importar(arq);
+      toast(`Backup restaurado (${n} registros) ✓`);
+    } catch (e) {
+      falhou(e);
+    }
+  };
+}
+
 // ============================================================
 // início
 // ============================================================
@@ -1960,14 +2049,15 @@ async function iniciar() {
   render();
   const cl = window.claude;
   if (!cl?.use) return semAcesso('Abra este site pelo link do claude.ai, entrando com a sua conta.');
-  const [db, assets, sample] = await Promise.all([cl.use('db'), cl.use('assets').catch(() => null), cl.use('sample').catch(() => null)]);
-  if (!db) return semAcesso('Entre na sua conta do Claude (a mesma que recebeu o convite) para ver e salvar suas notas.');
+  if (LOCAL) document.title = 'Notas do Giba';
+  const [db, assets, sample] = await Promise.all([cl.use('db').catch(() => null), cl.use('assets').catch(() => null), cl.use('sample').catch(() => null)]);
+  if (!db) return semAcesso(LOCAL ? 'Este navegador não conseguiu abrir o armazenamento. Saia do modo anônimo ou use Chrome, Edge, Safari ou Firefox.' : 'Entre na sua conta do Claude (a mesma que recebeu o convite) para ver e salvar suas notas.');
   S.db = db;
   S.assets = assets;
   S.sample = sample;
   if (sample) S.limites = await sample.limits().catch(() => null);
   if (S.sample && S.limites && !S.limites.images) S.sample = null;
-  $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : '⚠ Leitura de fotos indisponível';
+  $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : LOCAL ? '⚠ Leitura de fotos desligada' : '⚠ Leitura de fotos indisponível';
   const espera = setTimeout(() => {
     if (!pronto()) semAcesso('Não consegui carregar os dados. Verifique a internet e recarregue a página.');
   }, 15000);

@@ -1,0 +1,17 @@
+{
+  "name": "Notas do Giba",
+  "short_name": "Notas Giba",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f5",
+  "theme_color": "#0f7a5c",
+  "lang": "pt-BR",
+  "icons": [
+    {
+      "src": "icone.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
