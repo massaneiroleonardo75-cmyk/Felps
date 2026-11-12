@@ -81,7 +81,7 @@ O site está publicado como uma página do claude.ai, sem servidor próprio:
 - As fotos das notas ficam guardadas junto com a nota.
 - A leitura da foto usa o Claude da conta de quem está usando o site. Não precisa de chave de API.
 - Para o Giba usar: abra o link, clique em **Compartilhar**, convide o e-mail dele com permissão de **edição**
-  (sem link público, que deixaria o site só para leitura). Ele entra no claude.ai com esse e-mail (conta grátis serve).
+  (sem link público, que deixaria o site só para leitura). Ele entra no claude.ai com esse e-mail.
 
 O arquivo publicado é gerado por `node artifact/build.mjs` a partir de `public/calc.js`, `public/combinar.js`,
 `src/nfe-xml.js`, `public/style.css`, `artifact/extra.css` e `artifact/app.js`.
