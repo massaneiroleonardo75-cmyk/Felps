@@ -61,3 +61,4 @@ textarea.alto { min-height: 220px; }
 @media (max-width: 640px) { .acoes-enc { min-width: 0; width: 100%; } .acoes-enc .preco-enc { text-align: left; } .acoes-enc .fim { justify-content: flex-start; } }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+.passos-chave { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); }

@@ -68,7 +68,7 @@ export function distribuir(itens, encomendas, sugestoesIA = new Map()) {
   const candidatos = [];
   encomendas.forEach((enc) => {
     itens.forEach((item, idx) => {
-      const s = semelhanca(enc.produto, `${item.descricao} ${item.codigo || ''}`);
+      const s = semelhanca(enc.produto, `${item.nome || ''} ${item.descricao} ${item.codigo || ''}`);
       if (s >= LIMITE) candidatos.push({ enc, idx, s });
     });
   });

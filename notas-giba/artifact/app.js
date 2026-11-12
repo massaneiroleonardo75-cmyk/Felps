@@ -173,7 +173,7 @@ function enc(e) {
     contato_telefone: c?.telefone || '',
     nota_id: item ? e.nota_id : null,
     item_id: item ? e.item_id : null,
-    item_descricao: item?.descricao,
+    item_descricao: item ? nomeItem(item) : undefined,
     nota_numero: n?.numero,
     nota_emitente: n?.emitente_nome,
     valor_unit: valorUnit,
@@ -196,6 +196,7 @@ function listarEncomendas({ status, busca, contato_id } = {}) {
   return l.sort((a, b) => (ORDEM_STATUS[a.status] ?? 9) - (ORDEM_STATUS[b.status] ?? 9) || String(b.criado_em).localeCompare(String(a.criado_em)));
 }
 
+const nomeItem = (i) => i?.nome || i?.descricao || '';
 const pendentes = () =>
   [...S.encomendas.values()]
     .filter((e) => e.status === 'aguardando' && !e.item_id)
@@ -213,7 +214,7 @@ function resumoLista(n) {
     data: dataNota(n),
     origem: n.origem,
     itens: (n.itens || []).length,
-    primeiro_item: n.itens?.[0]?.descricao,
+    primeiro_item: nomeItem(n.itens?.[0]),
     investido: r.investido,
     venda: r.venda,
     lucro: r.lucro,
@@ -226,7 +227,7 @@ function listarNotas(busca) {
   let l = [...S.notas.values()];
   if (busca) {
     const b = normalizar(busca);
-    l = l.filter((n) => normalizar(`${n.emitente_nome || ''} ${n.numero || ''} ${(n.itens || []).map((i) => i.descricao).join(' ')}`).includes(b));
+    l = l.filter((n) => normalizar(`${n.emitente_nome || ''} ${n.numero || ''} ${(n.itens || []).map((i) => `${i.descricao} ${i.nome || ''}`).join(' ')}`).includes(b));
   }
   return l.sort((a, b) => dataNota(b).localeCompare(dataNota(a)) || String(b.criado_em).localeCompare(String(a.criado_em))).map(resumoLista);
 }
@@ -246,6 +247,8 @@ function limparItem(i, ordem) {
     ordem: i.ordem ?? ordem,
     codigo: txt(i.codigo, 60),
     descricao,
+    nome: txt(i.nome, 200),
+    categoria: txt(i.categoria, 40),
     ncm: txt(i.ncm, 20),
     quantidade,
     unidade: txt(i.unidade, 10),
@@ -443,19 +446,40 @@ function painel(periodo) {
 // ============================================================
 // leitura da nota por foto (Claude)
 // ============================================================
-const PROMPT_NOTA = `Você lê notas fiscais brasileiras (DANFE de NF-e, NFC-e, cupom fiscal, nota de serviço ou pedido) fotografadas pelo celular de um comprador que revende produtos. As imagens anexadas são as páginas de UMA nota. Extraia com precisão cada item e os totais.
+const REGRAS_NOME = `COMO ESCREVER "nome_produto" (muito importante):
+Notas fiscais abreviam, cortam e às vezes erram o nome. Escreva o nome comercial do produto como um vendedor brasileiro falaria para o cliente: tipo do produto + marca + linha/modelo + variação (tamanho, capacidade, cor, volume).
+- Expanda abreviações: PERF = Perfume, DES/DESOD = Desodorante, CEL/SMARTP = Celular/Smartphone, FONE OUV = Fone de ouvido, CARREG = Carregador, CX = Caixa, PT/PRT = Preto, BR/BCO = Branco, AZ = Azul, EDP = Eau de Parfum, EDT = Eau de Toilette, UN = unidade.
+- Corrija grafias erradas ou "quebradas" quando reconhecer o produto real. Ex.: "PERF F-K-H-A-R BLACK EDP 100ML" ou "PERF FAKAR BLK 100" -> "Perfume Lattafa Fakhar Black EDP 100ml".
+- Outros exemplos: "APPLE IPH 14 128GB AZ MPVN3BZ/A" -> "iPhone 14 128GB Azul"; "FONE JBL T520BT PT" -> "Fone de ouvido JBL Tune 520BT Preto"; "CARREG TURBO 20W USB-C BCO" -> "Carregador turbo 20W USB-C Branco"; "AIR FRYER MOND AF-34 4L" -> "Air Fryer Mondial AF-34 4L".
+- Se não tiver certeza da marca ou do modelo, não invente: escreva só o que dá para entender por extenso. Nunca troque números (capacidade, volume, modelo).
+- "categoria": uma palavra ou duas (ex.: Perfume, Celular, Eletrônico, Eletrodoméstico, Acessório, Roupa, Alimento).`;
 
-Regras:
-- Valores em reais como número com ponto decimal (1.234,56 -> 1234.56). Não invente: se não der para ler, use null e explique em "avisos".
-- Liste TODOS os itens, na ordem da nota, sem repetir itens entre páginas.
-- "descricao" exatamente como impressa.
-- "valor_total" do item = quantidade x unitário (já com desconto do item, se houver).
-- Confira se a soma dos itens bate com o total de produtos; se não bater, avise.
-- "encomendas_ids": só associe uma encomenda pendente se for claramente o mesmo produto (mesmo modelo, capacidade, versão). Na dúvida, deixe []. A soma das quantidades associadas não pode passar da quantidade do item.
-- Se as imagens não forem uma nota fiscal ou recibo com itens, responda com "eh_nota_fiscal": false.
+const PROMPT_NOTA = `Você é um assistente que lê notas fiscais brasileiras (DANFE de NF-e, NFC-e, cupom fiscal, nota de serviço ou pedido de compra) fotografadas pelo celular de um comprador que revende produtos. As imagens anexadas são as páginas de UMA mesma nota. Extraia tudo com precisão.
+
+REGRAS DE LEITURA:
+- Valores em reais como número com ponto decimal (1.234,56 -> 1234.56). Leia com cuidado vírgulas e pontos. Não invente: se uma parte estiver ilegível, use null e explique em "avisos".
+- Liste TODOS os itens da tabela de produtos, na ordem da nota, sem repetir itens entre páginas. Ignore linhas que não são produtos (tributos, observações, totais).
+- "descricao": exatamente como impressa na nota.
+- "valor_total" do item = quantidade x valor unitário (já com desconto do item, se houver).
+- "emitente_nome": a loja/fornecedor que vendeu (não o comprador). "data_emissao" no formato AAAA-MM-DD.
+- Confira se a soma dos itens bate com o total dos produtos; se não bater, avise em "avisos".
+- Se as imagens não forem uma nota fiscal, cupom ou pedido com itens, responda "eh_nota_fiscal": false e "itens": [].
+
+${REGRAS_NOME}
+
+ENCOMENDAS DE CLIENTES:
+- "encomendas_ids": se um item for claramente o mesmo produto de uma encomenda pendente da lista abaixo (mesmo modelo, capacidade, volume, versão), coloque o id dela. Considere apelidos e grafias diferentes (ex.: encomenda "fakhar preto" = "Perfume Lattafa Fakhar Black"). Na dúvida, deixe []. A soma das quantidades associadas não pode passar da quantidade do item.
 
 Responda SOMENTE com um objeto JSON neste formato:
-{"eh_nota_fiscal": true, "emitente_nome": "texto ou null", "emitente_cnpj": "só números ou null", "numero": "texto ou null", "serie": "texto ou null", "chave_acesso": "44 dígitos ou null", "data_emissao": "AAAA-MM-DD ou null", "itens": [{"codigo": "texto ou null", "descricao": "texto", "ncm": "texto ou null", "quantidade": 1, "unidade": "UN", "valor_unitario": 0.0, "valor_total": 0.0, "encomendas_ids": []}], "valor_produtos": 0.0, "frete": 0.0, "seguro": 0.0, "desconto": 0.0, "outras_despesas": 0.0, "impostos_adicionais": 0.0, "valor_total": 0.0, "avisos": []}`;
+{"eh_nota_fiscal": true, "emitente_nome": "texto ou null", "emitente_cnpj": "só números ou null", "numero": "texto ou null", "serie": "texto ou null", "chave_acesso": "44 dígitos ou null", "data_emissao": "AAAA-MM-DD ou null", "itens": [{"codigo": "texto ou null", "descricao": "texto", "nome_produto": "texto", "categoria": "texto ou null", "ncm": "texto ou null", "quantidade": 1, "unidade": "UN", "valor_unitario": 0.0, "valor_total": 0.0, "encomendas_ids": []}], "valor_produtos": 0.0, "frete": 0.0, "seguro": 0.0, "desconto": 0.0, "outras_despesas": 0.0, "impostos_adicionais": 0.0, "valor_total": 0.0, "avisos": []}`;
+
+const PROMPT_NOMES = `Você ajuda um revendedor brasileiro a entender os itens de uma nota fiscal. Para cada descrição abaixo (copiada da nota), escreva o nome comercial claro do produto.
+
+${REGRAS_NOME}
+
+Se algum item for claramente o mesmo produto de uma encomenda pendente da lista, coloque o id em "encomendas_ids" (na dúvida, []).
+
+Responda SOMENTE com JSON: {"itens": [{"indice": 0, "nome_produto": "texto", "categoria": "texto ou null", "encomendas_ids": []}]}`;
 
 const MSG_SAMPLE = {
   not_granted: 'Para ler a foto, permita que a página use o Claude (menu de permissões da página).',
@@ -470,14 +494,15 @@ const MSG_SAMPLE = {
   upstream_error: 'O serviço de leitura não respondeu. Tente de novo em instantes.',
   queue_overflow: 'Muitas leituras ao mesmo tempo. Espere um pouco.',
   cancelled: 'Leitura cancelada.',
-  chave_invalida: 'A chave da API do Claude não foi aceita. Confira em Ajustes.',
-  pedido_recusado: 'A API do Claude recusou o pedido. Confira se a conta da API tem créditos (console.anthropic.com).',
+  chave_invalida: 'A chave do Google Gemini não foi aceita. Confira em Ajustes.',
+  pedido_recusado: 'A leitura foi recusada. Tente outra foto (JPG) ou confira a chave em Ajustes.',
   sem_internet: 'Sem internet para ler a foto. Tente de novo quando conectar.',
+  limite_gratis: 'A cota grátis de leituras de hoje acabou. Amanhã volta sozinha. Enquanto isso, envie o XML ou digite a nota.',
 };
 
 async function lerNotaPorFoto(blobs) {
-  if (!S.sample) throw new ErroUsuario(LOCAL ? 'Para ler fotos, coloque a chave da API do Claude em Ajustes. Enquanto isso, envie o XML ou digite a nota.' : 'A leitura por foto não está disponível aqui. Abra pelo claude.ai com a sua conta, ou digite a nota.');
-  const pend = pendentes().map((e) => `id ${e.id}: ${e.produto} (qtd ${e.quantidade}) — cliente ${S.contatos.get(e.contato_id)?.nome || '?'}`);
+  if (!S.sample) throw new ErroUsuario(LOCAL ? 'Para ler fotos, coloque a chave grátis do Google Gemini em Ajustes. Enquanto isso, envie o XML ou digite a nota.' : 'A leitura por foto não está disponível aqui. Abra pelo claude.ai com a sua conta, ou digite a nota.');
+  const pend = listaPendentesIA();
   const tiers = S.limites?.modelTiers;
   const modelTier = !tiers || tiers.includes('complex') ? 'complex' : 'default';
   let n;
@@ -497,6 +522,8 @@ async function lerNotaPorFoto(blobs) {
       ordem,
       codigo: i.codigo || null,
       descricao: String(i.descricao || `Item ${ordem + 1}`),
+      nome: i.nome_produto ? String(i.nome_produto).slice(0, 200) : null,
+      categoria: i.categoria ? String(i.categoria).slice(0, 40) : null,
       ncm: i.ncm || null,
       quantidade: q,
       unidade: i.unidade || null,
@@ -532,6 +559,30 @@ async function lerNotaPorFoto(blobs) {
     },
     sugestoes,
   };
+}
+
+// Lista enviada à IA: só o produto e a quantidade (sem nome nem telefone de cliente).
+const listaPendentesIA = () => pendentes().map((e) => `id ${e.id}: ${e.produto} (qtd ${e.quantidade})`);
+
+// Para notas importadas por XML: pede à IA só os nomes claros dos produtos (não é obrigatório dar certo).
+async function nomearItens(itens) {
+  if (!S.sample || !LOCAL) return new Map();
+  try {
+    const lista = itens.map((i, k) => `${k}: ${i.descricao}`).join('\n');
+    const r = await S.sample.json(`${PROMPT_NOMES}\n\nEncomendas pendentes:\n${listaPendentesIA().join('\n') || '(nenhuma)'}\n\nItens da nota:\n${lista}`, { tipo: 'nomes' });
+    const sugestoes = new Map();
+    for (const x of r?.itens || []) {
+      const it = itens[x.indice];
+      if (!it) continue;
+      if (x.nome_produto) it.nome = String(x.nome_produto).slice(0, 200);
+      if (x.categoria) it.categoria = String(x.categoria).slice(0, 40);
+      if (Array.isArray(x.encomendas_ids) && x.encomendas_ids.length) sugestoes.set(x.indice, x.encomendas_ids.map(String));
+    }
+    return sugestoes;
+  } catch (e) {
+    console.warn('nomes não gerados', e);
+    return new Map();
+  }
 }
 
 // PDF → imagens (pdf.js carregado só quando precisa)
@@ -1003,7 +1054,7 @@ function paginaEnviar(pag) {
   const semIA = !S.sample;
   pag.innerHTML = `
     <div class="cabecalho"><div><h1>Enviar nota fiscal</h1><p class="sub">Tire uma foto da nota (ou mande o PDF/XML). Se a nota tiver mais de uma página, adicione todas.</p></div></div>
-    ${semIA ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Leitura automática de fotos desligada.</strong> ${LOCAL ? 'Para ligar, coloque a chave da API do Claude em <a href="#ajustes">Ajustes</a>.' : 'Abra o site pelo claude.ai com a sua conta para a leitura automática.'} Enquanto isso, envie o <b>XML</b> da nota ou <a href="#nova-nota">digite a nota</a>.</div></div>` : ''}
+    ${semIA ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Leitura automática de fotos desligada.</strong> ${LOCAL ? 'Para ligar, coloque a chave grátis do Google Gemini em <a href="#ajustes">Ajustes</a> (leva 2 minutos).' : 'Abra o site pelo claude.ai com a sua conta para a leitura automática.'} Enquanto isso, envie o <b>XML</b> da nota ou <a href="#nova-nota">digite a nota</a>.</div></div>` : ''}
     <div class="zona-envio" id="zona">
       <div class="ic-grande">${ic('camera')}</div>
       <h2>Fotografe a nota fiscal</h2>
@@ -1085,7 +1136,9 @@ function paginaEnviar(pag) {
       const xml = envio.find((a) => a.tipo === 'xml');
       if (xml) {
         if (!ehXmlNFe(xml.texto)) throw new ErroUsuario('Este XML não é de uma NF-e.');
-        lido = { nota: lerXmlNFe(xml.texto), sugestoes: new Map() };
+        const nota = lerXmlNFe(xml.texto);
+        $('.etapa', ov).textContent = 'Identificando os produtos…';
+        lido = { nota, sugestoes: await nomearItens(nota.itens) };
         origem = 'xml';
       } else {
         const blobs = envio.map((a) => a.blob);
@@ -1259,7 +1312,7 @@ function paginaNota(pag, id) {
           <tbody>${r.itens
             .map(
               (i) => `<tr data-item="${esc(i.id)}">
-              <td class="col-produto"><div class="item-desc">${esc(i.descricao)}</div><div class="item-meta">${[i.codigo && `Cód. ${esc(i.codigo)}`, `${R(i.valor_unitario)} na nota`].filter(Boolean).join(' · ')}</div>${pessoasDoItem(nota.itens.find((x) => x.id === i.id))}</td>
+              <td class="col-produto"><div class="item-desc">${esc(nomeItem(i))}</div><div class="item-meta">${[i.nome && i.nome !== i.descricao && `Na nota: ${esc(i.descricao)}`, i.codigo && `Cód. ${esc(i.codigo)}`, `${R(i.valor_unitario)} na nota`].filter(Boolean).join(' · ')}</div>${pessoasDoItem(nota.itens.find((x) => x.id === i.id))}</td>
               <td class="dir num">${numeroBR(i.quantidade, 3)}${i.unidade ? ` <span class="tiny">${esc(i.unidade)}</span>` : ''}</td>
               <td class="dir num c-custo"></td>
               <td class="dir"><span class="input-sufixo c-mk-wrap"><input class="campo-tab c-markup" inputmode="decimal" aria-label="Porcentagem" /><span>%</span></span></td>
@@ -1275,7 +1328,8 @@ function paginaNota(pag, id) {
       <div class="itens-cards">${r.itens
         .map(
           (i) => `<div class="item-card" data-item="${esc(i.id)}">
-          <div class="linha entre topo nowrap"><div class="cresce"><div class="item-desc">${esc(i.descricao)}</div>
+          <div class="linha entre topo nowrap"><div class="cresce"><div class="item-desc">${esc(nomeItem(i))}</div>
+          ${i.nome && i.nome !== i.descricao ? `<div class="item-meta">Na nota: ${esc(i.descricao)}</div>` : ''}
           <div class="item-meta">${numeroBR(i.quantidade, 3)} ${esc(i.unidade || 'un')} · custo <span class="c-custo"></span> cada</div></div>
           <button class="btn fantasma icone" data-menu-item="${esc(i.id)}" aria-label="Editar item">${ic('lapis', 'sm')}</button></div>
           <div class="valores">
@@ -1444,7 +1498,8 @@ function formItem(nota, item) {
   const m = modal(
     novo ? 'Adicionar item' : 'Editar item',
     `<form class="form-grid" id="f-item">
-      <label class="campo inteiro">Descrição<input id="it-desc" name="descricao" value="${esc(i.descricao)}" required autofocus /></label>
+      <label class="campo inteiro">Nome do produto <span class="tiny">(como você chama)</span><input id="it-nome" name="nome" value="${esc(i.nome || '')}" placeholder="Ex.: Perfume Lattafa Fakhar Black 100ml" autofocus /></label>
+      <label class="campo inteiro">Descrição na nota<input id="it-desc" name="descricao" value="${esc(i.descricao)}" required /></label>
       <label class="campo">Código<input id="it-cod" name="codigo" value="${esc(i.codigo || '')}" /></label>
       <label class="campo">Unidade<input id="it-un" name="unidade" value="${esc(i.unidade || '')}" /></label>
       <label class="campo">Quantidade<input id="it-qtd" name="quantidade" inputmode="decimal" value="${campoNum(i.quantidade)}" /></label>
@@ -1471,7 +1526,7 @@ function formItem(nota, item) {
   });
   $('#excluir', m.el)?.addEventListener('click', async () => {
     if ((nota.itens || []).length <= 1) return toast('A nota precisa ter pelo menos um item. Para apagar tudo, exclua a nota.', 'erro');
-    if (!(await confirmar('Excluir item?', esc(i.descricao), { botao: 'Excluir', perigo: true }))) return;
+    if (!(await confirmar('Excluir item?', esc(nomeItem(i)), { botao: 'Excluir', perigo: true }))) return;
     try {
       await liberar((e) => e.nota_id === nota.id && e.item_id === i.id);
       await salvarNota(nota.id, { itens: itens().filter((x) => x.id !== i.id) });
@@ -1486,6 +1541,7 @@ function formItem(nota, item) {
         {
           ...(novo ? {} : i),
           descricao: f.descricao.value,
+          nome: f.nome.value,
           codigo: f.codigo.value,
           unidade: f.unidade.value,
           quantidade: lerNumero(f.quantidade.value) || 1,
@@ -1506,11 +1562,11 @@ function paraQuem(nota, item, r) {
   const calc = r.itens.find((x) => x.id === item.id).calc;
   const livre = item.quantidade - item.encomendas.reduce((s, e) => s + e.quantidade, 0);
   const ordenadas = pendentes()
-    .map((e) => ({ e: enc(e), s: semelhanca(e.produto, `${item.descricao} ${item.codigo || ''}`) }))
+    .map((e) => ({ e: enc(e), s: semelhanca(e.produto, `${item.nome || ''} ${item.descricao} ${item.codigo || ''}`) }))
     .sort((a, b) => b.s - a.s || String(a.e.criado_em).localeCompare(String(b.e.criado_em)));
   const m = modal(
     'Para quem é este produto?',
-    `<div class="card pad caixa-item"><div class="item-desc">${esc(item.descricao)}</div>
+    `<div class="card pad caixa-item"><div class="item-desc">${esc(nomeItem(item))}</div>${item.nome && item.nome !== item.descricao ? `<div class="tiny">Na nota: ${esc(item.descricao)}</div>` : ''}
       <div class="tiny">${numeroBR(livre, 3)} de ${numeroBR(item.quantidade, 3)} sem dono · preço ${R(calc.precoUnit)} cada</div></div>
     ${
       ordenadas.length
@@ -1552,7 +1608,7 @@ function paraQuem(nota, item, r) {
       const cliente = lerCampoCliente(m.el);
       const valor = lerNumero(f.valor_combinado.value);
       const qtd = lerNumero(f.quantidade.value) || 1;
-      await criarEncomenda({ ...cliente, produto: item.descricao, quantidade: qtd, valor_combinado: Number.isFinite(valor) ? valor * qtd : null, nota, item });
+      await criarEncomenda({ ...cliente, produto: nomeItem(item), quantidade: qtd, valor_combinado: Number.isFinite(valor) ? valor * qtd : null, nota, item });
       m.fechar();
       toast('Cliente ligado ao item ✓');
     });
@@ -1962,18 +2018,22 @@ function paginaAjustes(pag) {
 function secaoLocal() {
   const temChave = Boolean(LOCAL.chave());
   return `<div class="card pad secao largo-760" id="leitura">
-      <h2>Leitura automática de fotos</h2>
-      <p class="small muted mb-sm">Para o site ler a foto da nota sozinho, ele usa a inteligência artificial do Claude. Crie uma chave em <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener">console.anthropic.com</a> (paga por uso, alguns centavos por nota) e cole aqui. A chave fica guardada só neste aparelho.</p>
-      <div class="linha">
-        <label class="campo cresce" for="aj-chave">Chave da API do Claude
-          <input id="aj-chave" type="password" autocomplete="off" placeholder="${temChave ? '•••••••• chave guardada' : 'sk-ant-…'}" />
-        </label>
-      </div>
+      <h2>Leitura automática de fotos <span class="badge st-entregue">grátis</span></h2>
+      <p class="small muted mb-sm">O site lê a foto da nota e entende o nome de cada produto usando a inteligência artificial do Google (Gemini), no plano gratuito. Não usa o Claude e não gasta crédito nenhum.</p>
+      ${temChave ? '' : `<ol class="passos-chave small">
+        <li>Abra <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><b>aistudio.google.com/apikey</b></a> e entre com uma conta Google (Gmail).</li>
+        <li>Clique em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
+        <li>Cole aqui embaixo e toque em <b>Salvar chave</b>. Pronto.</li>
+      </ol>`}
+      <label class="campo" for="aj-chave">Chave do Google Gemini
+        <input id="aj-chave" type="password" autocomplete="off" placeholder="${temChave ? '•••••••• chave guardada' : 'AIza…'}" />
+      </label>
       <div class="linha mt">
         <button type="button" class="btn primario" id="salvar-chave">${ic('check', 'sm')} Salvar chave</button>
         ${temChave ? `<button type="button" class="btn perigo" id="apagar-chave">${ic('lixo', 'sm')} Remover chave</button>` : ''}
         <span class="small ${temChave ? 'lucro-pos' : 'muted'}">${temChave ? '✓ Leitura de fotos ligada' : 'Sem chave: use o XML da nota ou digite os itens.'}</span>
       </div>
+      <p class="tiny mt">A chave fica guardada só neste aparelho. No plano grátis o Google pode usar as fotos enviadas para melhorar os serviços dele; o site manda só a foto da nota e a lista de produtos encomendados, nunca nome ou telefone de cliente. A cota grátis é diária: se acabar, volta no dia seguinte.</p>
     </div>
     <div class="card pad secao largo-760">
       <h2>Seus dados</h2>
@@ -1999,7 +2059,7 @@ function ligarSecaoLocal() {
   $('#salvar-chave').onclick = (ev) =>
     comBotao(ev.currentTarget, async () => {
       const chave = $('#aj-chave').value.trim();
-      if (!/^sk-ant-/.test(chave)) throw new ErroUsuario('A chave começa com "sk-ant-". Copie a chave inteira do console da Anthropic.');
+      if (!/^AIza[\w-]{20,}$/.test(chave)) throw new ErroUsuario('A chave do Google começa com "AIza". Copie a chave inteira em aistudio.google.com/apikey.');
       LOCAL.salvarChave(chave);
       S.sample = await window.claude.use('sample');
       S.limites = S.sample ? await S.sample.limits() : null;

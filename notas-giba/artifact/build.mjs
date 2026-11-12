@@ -1,7 +1,6 @@
 // Junta o site num único arquivo HTML para publicar como Artifact no claude.ai.
 // Uso: node artifact/build.mjs  ->  artifact/notas-giba.html
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
-import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -53,8 +52,6 @@ console.log(`artifact/notas-giba.html: ${(html.length / 1024).toFixed(0)} KB`);
 // ---------- versão de link aberto (GitHub Pages): ../docs ----------
 const docs = join(raiz, '..', 'docs');
 mkdirSync(join(docs, 'vendor', 'pdfjs'), { recursive: true });
-// kit oficial do Claude embutido (sem depender de CDN)
-execFileSync(join(raiz, 'node_modules', '.bin', 'esbuild'), [join(raiz, 'web', 'sdk-entrada.js'), '--bundle', '--minify', '--format=iife', '--platform=browser', '--target=es2020', `--outfile=${join(docs, 'vendor', 'anthropic.js')}`], { stdio: 'inherit' });
 for (const f of ['pdf.min.js', 'pdf.worker.min.js']) copyFileSync(join(raiz, 'node_modules', 'pdfjs-dist', 'build', f), join(docs, 'vendor', 'pdfjs', f));
 copyFileSync(join(raiz, 'public', 'icone.svg'), join(docs, 'icone.svg'));
 writeFileSync(join(docs, '.nojekyll'), '');
@@ -64,7 +61,7 @@ writeFileSync(
 );
 const corte = html.indexOf('<div id="raiz">');
 const cabeca = html.slice(0, corte).replace('<meta name="claude:viewport-fit-sides" content="cover">\n', '').replace('<meta name="theme-color" content="#0f7a5c">\n', '');
-const corpo = html.slice(corte).replace('<script>', `<script src="vendor/anthropic.js"></script>\n<script>window.__PDFJS_BASE = "vendor/pdfjs/";</script>\n<script>\n${ler('web/local.js')}\n</script>\n<script>`);
+const corpo = html.slice(corte).replace('<script>', `<script>window.__PDFJS_BASE = "vendor/pdfjs/";</script>\n<script>\n${ler('web/local.js')}\n</script>\n<script>`);
 const web = `<!doctype html>
 <html lang="pt-BR">
 <head>

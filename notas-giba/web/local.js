@@ -1,10 +1,10 @@
 // Notas do Giba — motor local para a versão de link aberto (GitHub Pages).
 // Oferece a mesma interface que o app usa no claude.ai (window.claude.use("db" | "assets" | "sample")),
 // mas guardando tudo no próprio navegador (IndexedDB): os dados continuam lá depois de fechar o
-// navegador ou desligar o computador. A leitura de fotos usa a API do Claude com a chave do usuário.
+// navegador ou desligar o computador. A leitura de fotos usa o Google Gemini (plano grátis) com a chave do usuário.
 (() => {
   const NOME_BANCO = 'notas-giba';
-  const CHAVE_API = 'notas-giba:chave-api';
+  const CHAVE_API = 'notas-giba:chave-gemini';
   let idb = null;
   let abrindo = null;
   const cache = new Map(); // caminho -> dados
@@ -155,47 +155,61 @@
     },
   };
 
-  // ---------------- leitura de fotos com a API do Claude ----------------
-  const anulavel = (tipo) => ({ anyOf: [{ type: tipo }, { type: 'null' }] });
-  const ESQUEMA = {
-    type: 'object',
-    additionalProperties: false,
-    required: ['eh_nota_fiscal', 'emitente_nome', 'emitente_cnpj', 'numero', 'serie', 'chave_acesso', 'data_emissao', 'itens', 'valor_produtos', 'frete', 'seguro', 'desconto', 'outras_despesas', 'impostos_adicionais', 'valor_total', 'avisos'],
+  // ---------------- leitura de fotos com o Google Gemini (plano gratuito) ----------------
+  // Chave grátis em aistudio.google.com/apikey. Fica guardada só neste aparelho.
+  // Se a cota grátis de um modelo acabar, tenta o próximo da lista.
+  const MODELOS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
+  const URL_API = 'https://generativelanguage.googleapis.com/v1beta/models/';
+  const T = (type, extra = {}) => ({ type, ...extra });
+  const N = (type) => ({ type, nullable: true });
+  const ITEM = T('OBJECT', {
     properties: {
-      eh_nota_fiscal: { type: 'boolean' },
-      emitente_nome: anulavel('string'),
-      emitente_cnpj: anulavel('string'),
-      numero: anulavel('string'),
-      serie: anulavel('string'),
-      chave_acesso: anulavel('string'),
-      data_emissao: anulavel('string'),
-      itens: {
-        type: 'array',
-        items: {
-          type: 'object',
-          additionalProperties: false,
-          required: ['codigo', 'descricao', 'ncm', 'quantidade', 'unidade', 'valor_unitario', 'valor_total', 'encomendas_ids'],
-          properties: {
-            codigo: anulavel('string'),
-            descricao: { type: 'string' },
-            ncm: anulavel('string'),
-            quantidade: { type: 'number' },
-            unidade: anulavel('string'),
-            valor_unitario: { type: 'number' },
-            valor_total: { type: 'number' },
-            encomendas_ids: { type: 'array', items: { type: 'string' } },
-          },
-        },
-      },
-      valor_produtos: anulavel('number'),
-      frete: anulavel('number'),
-      seguro: anulavel('number'),
-      desconto: anulavel('number'),
-      outras_despesas: anulavel('number'),
-      impostos_adicionais: anulavel('number'),
-      valor_total: anulavel('number'),
-      avisos: { type: 'array', items: { type: 'string' } },
+      codigo: N('STRING'),
+      descricao: T('STRING', { description: 'descrição exatamente como impressa na nota' }),
+      nome_produto: T('STRING', { description: 'nome comercial claro e completo do produto, por extenso' }),
+      categoria: N('STRING'),
+      ncm: N('STRING'),
+      quantidade: T('NUMBER'),
+      unidade: N('STRING'),
+      valor_unitario: T('NUMBER'),
+      valor_total: T('NUMBER'),
+      encomendas_ids: T('ARRAY', { items: T('STRING') }),
     },
+    required: ['codigo', 'descricao', 'nome_produto', 'categoria', 'ncm', 'quantidade', 'unidade', 'valor_unitario', 'valor_total', 'encomendas_ids'],
+  });
+  const ESQUEMAS = {
+    nota: T('OBJECT', {
+      properties: {
+        eh_nota_fiscal: T('BOOLEAN'),
+        emitente_nome: N('STRING'),
+        emitente_cnpj: N('STRING'),
+        numero: N('STRING'),
+        serie: N('STRING'),
+        chave_acesso: N('STRING'),
+        data_emissao: N('STRING'),
+        itens: T('ARRAY', { items: ITEM }),
+        valor_produtos: N('NUMBER'),
+        frete: N('NUMBER'),
+        seguro: N('NUMBER'),
+        desconto: N('NUMBER'),
+        outras_despesas: N('NUMBER'),
+        impostos_adicionais: N('NUMBER'),
+        valor_total: N('NUMBER'),
+        avisos: T('ARRAY', { items: T('STRING') }),
+      },
+      required: ['eh_nota_fiscal', 'emitente_nome', 'emitente_cnpj', 'numero', 'serie', 'chave_acesso', 'data_emissao', 'itens', 'valor_produtos', 'frete', 'seguro', 'desconto', 'outras_despesas', 'impostos_adicionais', 'valor_total', 'avisos'],
+    }),
+    nomes: T('OBJECT', {
+      properties: {
+        itens: T('ARRAY', {
+          items: T('OBJECT', {
+            properties: { indice: T('INTEGER'), nome_produto: T('STRING'), categoria: N('STRING'), encomendas_ids: T('ARRAY', { items: T('STRING') }) },
+            required: ['indice', 'nome_produto', 'categoria', 'encomendas_ids'],
+          }),
+        }),
+      },
+      required: ['itens'],
+    }),
   };
 
   const lerChave = () => {
@@ -214,42 +228,72 @@
       r.readAsDataURL(blob);
     });
 
+  async function chamarGemini(chave, modelo, corpo) {
+    let r;
+    try {
+      r = await fetch(`${URL_API}${modelo}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
+        body: JSON.stringify(corpo),
+      });
+    } catch {
+      throw { code: 'sem_internet' };
+    }
+    let dados = null;
+    try {
+      dados = await r.json();
+    } catch {}
+    if (r.ok) return dados;
+    const status = dados?.error?.status || '';
+    const razao = JSON.stringify(dados?.error?.details || '');
+    console.warn('[gemini]', modelo, r.status, dados?.error?.message);
+    if (r.status === 400 && /API_KEY_INVALID/.test(razao + status)) throw { code: 'chave_invalida' };
+    if (r.status === 401 || r.status === 403) throw { code: 'chave_invalida' };
+    if (r.status === 429 || r.status === 404 || status === 'RESOURCE_EXHAUSTED' || status === 'NOT_FOUND') throw { code: 'proximo_modelo', limite: r.status === 429 };
+    if (r.status === 400) throw { code: 'pedido_recusado' };
+    throw { code: 'proximo_modelo' };
+  }
+
   function criarSample(chave) {
-    const Anthropic = window.Anthropic;
-    if (!Anthropic) return null;
-    const cliente = new Anthropic({ apiKey: chave, dangerouslyAllowBrowser: true, maxRetries: 2 });
     return {
-      limits: async () => ({ images: { maxCount: 8, maxInputBytes: 5 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp'] }, modelTiers: ['default', 'complex'] }),
+      provedor: 'gemini',
+      limits: async () => ({ images: { maxCount: 8, maxInputBytes: 15 * 1024 * 1024, mediaTypes: ['image/jpeg', 'image/png', 'image/webp'] }, modelTiers: ['default'] }),
       async json(prompt, opcoes = {}) {
         const imagens = opcoes.images ? [].concat(opcoes.images) : [];
-        const conteudo = [];
-        for (const b of imagens) conteudo.push({ type: 'image', source: { type: 'base64', media_type: b.type || 'image/jpeg', data: await paraBase64(b) } });
-        conteudo.push({ type: 'text', text: prompt });
-        let resp;
-        try {
-          resp = await cliente.beta.messages.create({
-            model: 'claude-opus-5-5',
-            max_tokens: 16000,
-            betas: ['server-side-fallback-2026-07-01'],
-            fallbacks: 'default',
-            output_config: { effort: 'medium', format: { type: 'json_schema', schema: ESQUEMA } },
-            messages: [{ role: 'user', content: conteudo }],
-          });
-        } catch (e) {
-          console.error('[leitura]', e);
-          if (e instanceof Anthropic.AuthenticationError || e instanceof Anthropic.PermissionDeniedError) throw { code: 'chave_invalida' };
-          if (e instanceof Anthropic.RateLimitError) throw { code: 'rate_limited' };
-          if (e instanceof Anthropic.BadRequestError) throw { code: 'pedido_recusado' };
-          if (e instanceof Anthropic.APIConnectionError) throw { code: 'sem_internet' };
-          throw { code: 'upstream_error' };
+        const partes = [];
+        for (const b of imagens) partes.push({ inline_data: { mime_type: b.type || 'image/jpeg', data: await paraBase64(b) } });
+        partes.push({ text: prompt });
+        const corpo = {
+          contents: [{ role: 'user', parts: partes }],
+          generationConfig: { responseMimeType: 'application/json', responseSchema: ESQUEMAS[opcoes.tipo] || ESQUEMAS.nota, temperature: 0.1, maxOutputTokens: 16384 },
+        };
+        let limite = false;
+        for (const modelo of MODELOS) {
+          let dados;
+          try {
+            dados = await chamarGemini(chave, modelo, corpo);
+          } catch (e) {
+            if (e.code === 'proximo_modelo') {
+              limite ||= e.limite;
+              continue;
+            }
+            throw e;
+          }
+          if (dados?.promptFeedback?.blockReason) throw { code: 'refused' };
+          const cand = dados?.candidates?.[0];
+          const texto = (cand?.content?.parts || []).filter((p) => !p.thought && typeof p.text === 'string').map((p) => p.text).join('');
+          if (!texto) {
+            if (cand?.finishReason === 'SAFETY' || cand?.finishReason === 'PROHIBITED_CONTENT') throw { code: 'refused' };
+            continue;
+          }
+          try {
+            return JSON.parse(texto.replace(/^```(?:json)?\s*|\s*```$/g, ''));
+          } catch {
+            if (cand?.finishReason === 'MAX_TOKENS') throw { code: 'prompt_too_large' };
+            throw { code: 'invalid_json' };
+          }
         }
-        if (resp.stop_reason === 'refusal') throw { code: 'refused' };
-        const texto = resp.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
-        try {
-          return JSON.parse(texto);
-        } catch {
-          throw { code: 'invalid_json' };
-        }
+        throw { code: limite ? 'limite_gratis' : 'upstream_error' };
       },
     };
   }

@@ -93,9 +93,14 @@ A pasta `docs/` (na raiz do repositório) é o site completo, que roda sozinho n
 - Abre em qualquer computador ou celular, sem conta e sem Claude.
 - Os dados ficam guardados **no próprio navegador** (IndexedDB) e continuam lá depois de fechar ou desligar o computador.
   Cada aparelho guarda os seus; para passar para outro aparelho ou ter cópia de segurança, use **Ajustes → Baixar/Restaurar backup**.
-- A leitura automática de fotos usa a API do Claude com uma chave colocada em **Ajustes** (fica só naquele aparelho).
-  Sem chave, funcionam o XML da NF-e e a nota digitada.
-- Tudo embutido (kit do Claude e leitor de PDF em `docs/vendor/`), sem depender de CDN.
+- A leitura automática de fotos usa o **Google Gemini no plano gratuito** (`gemini-3.8-flash`; se a cota grátis do dia
+  acabar, tenta `gemini-3.6-flash` e `gemini-2.5-flash`). A chave grátis é criada em aistudio.google.com/apikey e colada em
+  **Ajustes** (fica só naquele aparelho). Não usa Claude nem gasta créditos.
+- A IA também escreve o **nome comercial** de cada produto a partir da descrição abreviada da nota
+  (ex.: "PERF FKHAR BLACK EDP 100ML" → "Perfume Lattafa Fakhar Black EDP 100ml"), inclusive em notas importadas por XML.
+- Para a IA vai só a foto da nota e a lista de produtos encomendados; nome e telefone de clientes nunca são enviados.
+- Sem chave, funcionam o XML da NF-e e a nota digitada.
+- Leitor de PDF embutido em `docs/vendor/`, sem depender de CDN.
 
 Para ativar o link (uma vez): no GitHub, **Settings → Pages → Build and deployment → Source: Deploy from a branch**,
 escolha a branch `claude/invoice-management-system-s7wtyz` e a pasta **/docs**, e clique em **Save**.
