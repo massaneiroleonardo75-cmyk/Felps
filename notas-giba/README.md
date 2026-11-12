@@ -71,3 +71,17 @@ public/calc.js   cálculo de preço, rateio, arredondamento e mensagem (usado no
 public/combinar.js  reconhece de qual encomenda é cada item
 public/app.js    o site (tela única, funciona no celular e no computador)
 ```
+
+## Versão no ar (hospedada no Claude, grátis)
+
+O site está publicado como uma página do claude.ai, sem servidor próprio:
+**https://claude.ai/artifact/6k9wqATf8rQXScFjrtsWKX**
+
+- Os dados (notas, encomendas, clientes, ajustes) ficam no banco da própria página e aparecem iguais no celular e no computador.
+- As fotos das notas ficam guardadas junto com a nota.
+- A leitura da foto usa o Claude da conta de quem está usando o site. Não precisa de chave de API.
+- Para o Giba usar: abra o link, clique em **Compartilhar**, convide o e-mail dele com permissão de **edição**
+  (sem link público, que deixaria o site só para leitura). Ele entra no claude.ai com esse e-mail (conta grátis serve).
+
+O arquivo publicado é gerado por `node artifact/build.mjs` a partir de `public/calc.js`, `public/combinar.js`,
+`src/nfe-xml.js`, `public/style.css`, `artifact/extra.css` e `artifact/app.js`.

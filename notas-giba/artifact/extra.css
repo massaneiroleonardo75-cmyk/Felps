@@ -1,0 +1,63 @@
+/* ---- complementos da versão hospedada ---- */
+[hidden] { display: none !important; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 16; background: var(--bg); }
+.logo { text-decoration: none !important; }
+.carregando { display: grid; place-items: center; gap: 12px; padding: 80px 0; }
+.boas-vindas h2 { margin-bottom: 14px; }
+.passos { list-style: none; margin: 0 0 18px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.passos li { display: flex; gap: 12px; align-items: flex-start; }
+.passos p { margin-top: 2px; }
+.passo-num { flex: none; width: 30px; height: 30px; border-radius: 50%; background: var(--brand-soft); color: var(--brand-ink); display: grid; place-items: center; font-weight: 800; font-size: 14px; }
+@media (max-width: 720px) { .passos { grid-template-columns: 1fr; } }
+.contadores { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.contador { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 8px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); font: inherit; cursor: pointer; }
+.contador:hover { border-color: var(--brand); }
+.grande-num { font-size: 24px; font-weight: 750; }
+.sub-h { margin: 18px 0 10px; }
+.nowrap { flex-wrap: nowrap; }
+.gap-6 { gap: 6px; } .gap-8 { gap: 8px; } .gap-14 { gap: 14px; }
+.leg-inv { background: var(--border-strong); } .leg-ven { background: var(--brand); }
+.total-linha { margin-top: 4px; }
+.avatar.quadrado { border-radius: 12px; }
+.avatar.mini-av { width: 30px; height: 30px; font-size: 12px; }
+.avatar.grande-av { width: 56px; height: 56px; font-size: 20px; }
+a.avatar { text-decoration: none; }
+.bloco { display: block; }
+.dir-txt { text-align: right; }
+.mb { margin-bottom: 14px; } .mb-sm { margin-bottom: 12px; } .mt { margin-top: 14px; }
+.centro { text-align: center; margin-top: 20px; }
+.vazio-acao { margin-top: 16px; }
+.max-320 { max-width: 320px; }
+.col-produto { min-width: 260px; }
+.forte { font-weight: 650; }
+.linha.topo { align-items: flex-start; }
+.rodape-card { padding: 12px 18px 16px; border-top: 1px solid var(--border); }
+.pre { white-space: pre-wrap; }
+.muted.pre { margin-top: 6px; }
+.btn.esquerda { margin-right: auto; }
+.caixa-item { box-shadow: none; background: var(--surface-2); }
+.lista-rolavel { max-height: 260px; overflow: auto; }
+.linha-item { display: grid; grid-template-columns: minmax(0, 1fr) 90px 130px 40px; gap: 10px; align-items: end; }
+@media (max-width: 560px) {
+  .linha-item { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 40px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+  .linha-item > label:first-child { grid-column: 1 / -1; }
+}
+.linha.fim { justify-content: flex-end; }
+.herda { color: inherit; }
+.acoes-enc { min-width: 170px; }
+.preco-enc { text-align: right; font-weight: 700; font-size: 16px; }
+.sel-peq { height: 32px; font-size: 13px; padding: 0 8px; width: auto; }
+.largo-760 { max-width: 760px; gap: 16px; }
+textarea.alto { min-height: 220px; }
+.bolha-wa { white-space: pre-wrap; background: var(--wa-bolha); color: var(--wa-bolha-texto); border: 1px solid var(--border); border-radius: 12px; padding: 14px; font-size: 14px; min-height: 220px; font-weight: 400; }
+.foto-nota { margin-left: auto; }
+.cli-novo { margin-top: 10px; }
+.cli-novo .alerta { margin-bottom: 10px; }
+.aviso-cliente .small.muted, .aviso-cliente .tiny { margin-top: 2px; }
+.lendo .tiny { margin-top: 10px; }
+.zona-envio > p { margin-top: 6px; }
+.zona-envio > .tiny { margin-top: 14px; }
+.item-desc { overflow-wrap: anywhere; }
+@media (max-width: 640px) { .acoes-enc { min-width: 0; width: 100%; } .acoes-enc .preco-enc { text-align: left; } .acoes-enc .fim { justify-content: flex-start; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+:focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
