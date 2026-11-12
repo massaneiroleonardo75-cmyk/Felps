@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe" versao="4.00"><NFe><infNFe Id="NFe42241112345678000199550010000123451000123456" versao="4.00">
+<ide><cUF>42</cUF><natOp>VENDA</natOp><mod>55</mod><serie>1</serie><nNF>12345</nNF><dhEmi>2026-11-10T10:30:00-03:00</dhEmi></ide>
+<emit><CNPJ>12345678000199</CNPJ><xNome>DISTRIBUIDORA EXEMPLO LTDA</xNome><xFant>Distribuidora Exemplo</xFant></emit>
+<det nItem="1"><prod><cProd>MPVN3</cProd><xProd>APPLE IPHONE 14 128GB AZUL MPVN3BZ/A</xProd><NCM>85171231</NCM><uCom>UN</uCom><qCom>2.0000</qCom><vUnCom>4000.0000000000</vUnCom><vProd>8000.00</vProd></prod><imposto><IPI><IPITrib><vIPI>0.00</vIPI></IPITrib></IPI></imposto></det>
+<det nItem="2"><prod><cProd>CAP01</cProd><xProd>CAPA SILICONE IPHONE 14 PRETA</xProd><NCM>39269090</NCM><uCom>UN</uCom><qCom>5.0000</qCom><vUnCom>20.0000000000</vUnCom><vProd>100.00</vProd></prod><imposto></imposto></det>
+<det nItem="3"><prod><cProd>FON9</cProd><xProd>FONE BLUETOOTH JBL TUNE 520BT &amp; ESTOJO</xProd><NCM>85183000</NCM><uCom>UN</uCom><qCom>1.0000</qCom><vUnCom>250.0000000000</vUnCom><vProd>250.00</vProd></prod><imposto></imposto></det>
+<total><ICMSTot><vProd>8350.00</vProd><vFrete>83.50</vFrete><vSeg>0.00</vSeg><vDesc>0.00</vDesc><vIPI>0.00</vIPI><vST>0.00</vST><vOutro>0.00</vOutro><vNF>8433.50</vNF></ICMSTot></total>
+</infNFe></NFe></nfeProc>

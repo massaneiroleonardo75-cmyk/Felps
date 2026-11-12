@@ -1,0 +1,22 @@
+{
+  "name": "notas-giba",
+  "version": "1.0.0",
+  "description": "Controle de notas fiscais, preços de venda e encomendas do Giba: fotografa a nota, a IA extrai os itens, calcula o preço com a porcentagem e avisa o cliente no WhatsApp.",
+  "type": "module",
+  "main": "src/server.js",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --disable-warning=ExperimentalWarning --watch src/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test test/*.test.js"
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
+    "express": "^5.3.0",
+    "zod": "^4.6.7"
+  }
+}
