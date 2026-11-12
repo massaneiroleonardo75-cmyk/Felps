@@ -2086,6 +2086,7 @@ function render() {
     a.classList.toggle('ativo', caminho === r || (r === 'notas' && /^nota-|^nova-nota/.test(caminho)) || (r === 'clientes' && /^cliente-/.test(caminho)));
   });
   if (mudou) {
+    if (S.flash && caminho !== `nota-${S.flash.nota}`) S.flash = null;
     scrollTo(0, 0);
     if (caminho === 'inicio') saudacaoAtual = saudacao();
   }
@@ -2493,8 +2494,8 @@ function paginaNota(pag, id) {
   const nota = JSON.parse(JSON.stringify(original)); // cópia editável
   nota.itens = nota.itens || [];
   const modo = S.ajustes.arredondamento;
+  // o aviso de "nota cadastrada" fica até sair desta nota (a tela pode ser redesenhada mais de uma vez)
   const flash = S.flash?.nota === id ? S.flash : null;
-  S.flash = null;
 
   const todasEnc = [...S.encomendas.values()].map(enc).filter((e) => e.nota_id === id);
   nota.itens.forEach((i) => (i.encomendas = todasEnc.filter((e) => e.item_id === i.id)));
@@ -3353,6 +3354,20 @@ async function iniciar() {
   const cl = window.claude;
   if (!cl?.use) return semAcesso('Abra este site pelo link do claude.ai, entrando com a sua conta.');
   if (LOCAL) document.title = 'Notas do Giba';
+  // Link de configuração: ...#chave-XXXX liga a leitura de fotos neste aparelho e some da barra de endereço.
+  let chaveDoLink = false;
+  if (LOCAL && /^#chave-/.test(location.hash)) {
+    const chave = decodeURIComponent(location.hash.slice(7)).replace(/\s+/g, '');
+    history.replaceState(null, '', location.pathname + location.search + '#inicio');
+    if (chave.length >= 20) {
+      try {
+        LOCAL.salvarChave(chave);
+        chaveDoLink = true;
+      } catch (e) {
+        falhou(e);
+      }
+    }
+  }
   const [db, assets, sample] = await Promise.all([cl.use('db').catch(() => null), cl.use('assets').catch(() => null), cl.use('sample').catch(() => null)]);
   if (!db) return semAcesso(LOCAL ? 'Este navegador não conseguiu abrir o armazenamento. Saia do modo anônimo ou use Chrome, Edge, Safari ou Firefox.' : 'Entre na sua conta do Claude (a mesma que recebeu o convite) para ver e salvar suas notas.');
   S.db = db;
@@ -3360,6 +3375,7 @@ async function iniciar() {
   S.sample = sample;
   if (sample) S.limites = await sample.limits().catch(() => null);
   if (S.sample && S.limites && !S.limites.images) S.sample = null;
+  if (chaveDoLink) toast(S.sample ? 'Leitura automática de fotos ligada neste aparelho ✓' : 'Não consegui ligar a leitura de fotos. Cole a chave em Ajustes.', S.sample ? '' : 'erro');
   $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : LOCAL ? '⚠ Leitura de fotos desligada' : '⚠ Leitura de fotos indisponível';
   const espera = setTimeout(() => {
     if (!pronto()) semAcesso('Não consegui carregar os dados. Verifique a internet e recarregue a página.');
