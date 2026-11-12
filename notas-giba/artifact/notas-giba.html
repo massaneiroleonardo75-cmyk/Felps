@@ -2867,11 +2867,11 @@ function secaoLocal() {
       <p class="small muted mb-sm">O site lê a foto da nota e entende o nome de cada produto usando a inteligência artificial do Google (Gemini), no plano gratuito. Não usa o Claude e não gasta crédito nenhum.</p>
       ${temChave ? '' : `<ol class="passos-chave small">
         <li>Abra <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener"><b>aistudio.google.com/apikey</b></a> e entre com uma conta Google (Gmail).</li>
-        <li>Clique em <b>Create API key</b> (Criar chave de API) e copie a chave.</li>
+        <li>Clique em <b>Criar chave de API</b> (Create API key) e toque no botão de copiar ao lado da chave.</li>
         <li>Cole aqui embaixo e toque em <b>Salvar chave</b>. Pronto.</li>
       </ol>`}
       <label class="campo" for="aj-chave">Chave do Google Gemini
-        <input id="aj-chave" type="password" autocomplete="off" placeholder="${temChave ? '•••••••• chave guardada' : 'AIza…'}" />
+        <input id="aj-chave" type="password" autocomplete="off" placeholder="${temChave ? '•••••••• chave guardada' : 'Cole a chave aqui (AQ.… ou AIza…)'}" />
       </label>
       <div class="linha mt">
         <button type="button" class="btn primario" id="salvar-chave">${ic('check', 'sm')} Salvar chave</button>
@@ -2903,8 +2903,9 @@ function ligarSecaoLocal() {
   });
   $('#salvar-chave').onclick = (ev) =>
     comBotao(ev.currentTarget, async () => {
-      const chave = $('#aj-chave').value.trim();
-      if (!/^AIza[\w-]{20,}$/.test(chave)) throw new ErroUsuario('A chave do Google começa com "AIza". Copie a chave inteira em aistudio.google.com/apikey.');
+      // aceita os formatos de chave do Google (AIza…, AQ.…) e tira espaços/quebras que vêm ao colar
+      const chave = $('#aj-chave').value.replace(/\s+/g, '');
+      if (chave.length < 20) throw new ErroUsuario('Chave incompleta. Copie a chave inteira em aistudio.google.com/apikey (botão de copiar ao lado da chave).');
       LOCAL.salvarChave(chave);
       S.sample = await window.claude.use('sample');
       S.limites = S.sample ? await S.sample.limits() : null;
