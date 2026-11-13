@@ -107,3 +107,16 @@ escolha a branch `claude/invoice-management-system-s7wtyz` e a pasta **/docs**, 
 O endereço fica `https://massaneiroleonardo75-cmyk.github.io/Felps/`.
 
 Para regerar: `cd notas-giba && npm install && node artifact/build.mjs`.
+
+## Novidades
+
+- **Notas em dólar:** a IA identifica a moeda (dólar é o padrão; real só quando aparece "R$" ou é DANFE/NF-e brasileiro).
+  Os valores ficam em US$ e o custo é convertido para reais pela cotação do dia (AwesomeAPI, com mais duas fontes de reserva),
+  editável em cada nota. Em Ajustes dá para fixar uma cotação.
+- **Leitura ~10x mais rápida:** primeiro um modelo rápido (`gemini-3.5-flash-lite`, ~2 a 4 s) lê tudo e a nota já aparece;
+  depois um modelo mais caprichoso revisa os nomes dos produtos em segundo plano. Cada modelo tem tempo máximo e há reservas.
+- **Site mais leve:** sem fonte externa, fotos carregadas só quando aparecem e service worker (o site fica guardado no aparelho).
+- **Celular e computador juntos (Firebase/Firestore, plano grátis):** em Ajustes → "Ligar sincronização"; os outros aparelhos
+  entram pelo QR Code ou link de conexão. Funciona sem internet (envia quando voltar). Fotos ficam como imagens comprimidas.
+  Para ativar no site: criar um projeto no Firebase, criar o Firestore, publicar `notas-giba/firebase/firestore.rules` e
+  colocar a configuração web em `notas-giba/web/firebase-config.json` antes do build.

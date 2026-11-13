@@ -31,11 +31,18 @@ export function arredondar(valor, modo = 'nenhum') {
 
 // Fator que espalha frete, impostos (IPI/ST), seguro e descontos da nota proporcionalmente
 // ao valor de cada item, para o custo refletir o que realmente foi pago.
+// Nota em dólar: os valores ficam na moeda original e o custo é convertido para reais pela cotação.
+export function cambio(nota) {
+  if (nota.moeda !== 'USD') return 1;
+  const c = Number(nota.cotacao);
+  return c > 0 ? c : 1;
+}
+
 export function fatorRateio(nota, itens) {
   const soma = itens.reduce((s, i) => s + (Number(i.valor_total) || 0), 0);
   const total = Number(nota.valor_total) || 0;
-  if (!nota.ratear_despesas || soma <= 0 || total <= 0) return 1;
-  return total / soma;
+  const rateio = !nota.ratear_despesas || soma <= 0 || total <= 0 ? 1 : total / soma;
+  return rateio * cambio(nota);
 }
 
 export function markupDoItem(item, nota) {
@@ -93,6 +100,10 @@ export function resumoNota(nota, itens, modo = 'nenhum') {
 // ---------- formatação ----------
 const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
 export const reais = (v) => fmtBRL.format(Number(v) || 0);
+const fmtUSD = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' });
+export const dolares = (v) => fmtUSD.format(Number(v) || 0);
+// valor na moeda original da nota
+export const naMoeda = (v, moeda) => (moeda === 'USD' ? dolares(v) : reais(v));
 
 export function numeroBR(v, casas = 2) {
   return (Number(v) || 0).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: casas });

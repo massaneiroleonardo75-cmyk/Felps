@@ -1,0 +1,10 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Cada empresa tem um "espaço" com código secreto longo. Só quem tem o código lê e grava.
+    // Não existe regra para a coleção "espacos" em si: ninguém consegue listar os espaços.
+    match /espacos/{espaco}/{colecao}/{doc} {
+      allow read, write: if espaco.size() >= 20;
+    }
+  }
+}

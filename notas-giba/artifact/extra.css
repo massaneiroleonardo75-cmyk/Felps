@@ -62,3 +62,11 @@ textarea.alto { min-height: 220px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
 .passos-chave { margin: 0 0 14px; padding-left: 20px; display: grid; gap: 6px; color: var(--text-2); }
+
+.controles-nota .moeda-nota { width: 160px; }
+.controles-nota .cotacao-nota { width: 170px; }
+.controles-nota .cotacao-nota .tiny { font-weight: 500; }
+
+.sync-conectar { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
+.sync-conectar .qr { width: 190px; height: 190px; flex: none; background: #fff; border-radius: 14px; padding: 6px; border: 1px solid var(--border); }
+.sync-conectar .qr svg { width: 100%; height: 100%; display: block; }

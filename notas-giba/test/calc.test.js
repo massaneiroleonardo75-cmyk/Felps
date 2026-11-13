@@ -59,3 +59,13 @@ test('mensagem pronta com itens e total', () => {
   assert.match(t, /• 2x Capa — \*R\$\s60,00\*/);
   assert.match(t, /Total: R\$\s5\.260,00/);
 });
+
+test('nota em dólar: custo convertido para reais pela cotação', () => {
+  const nota = { moeda: 'USD', cotacao: 5, markup_padrao: 30, valor_total: 110, ratear_despesas: 1 };
+  const r = C.resumoNota(nota, [{ id: 'a', quantidade: 2, valor_total: 100 }]);
+  // US$ 100 + frete rateado (US$ 10) = US$ 110 -> R$ 550; 2 un -> R$ 275 cada; +30% = R$ 357,50
+  assert.equal(Math.round(r.investido * 100) / 100, 550);
+  assert.equal(r.itens[0].calc.precoUnit, 357.5);
+  assert.equal(C.cambio({ moeda: 'BRL', cotacao: 5 }), 1);
+  assert.equal(C.naMoeda(10, 'USD').replace(/\s/g, ' '), 'US$ 10,00');
+});

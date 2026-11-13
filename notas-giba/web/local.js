@@ -43,15 +43,11 @@
   }
 
   async function recarregar() {
-    const t = idb.transaction(['docs', 'arquivos']);
+    const t = idb.transaction('docs');
     const docs = t.objectStore('docs');
-    const arqs = t.objectStore('arquivos');
-    const [chaves, valores, idsArq, blobs] = await Promise.all([req(docs.getAllKeys()), req(docs.getAll()), req(arqs.getAllKeys()), req(arqs.getAll())]);
+    const [chaves, valores] = await Promise.all([req(docs.getAllKeys()), req(docs.getAll())]);
     cache.clear();
     chaves.forEach((k, i) => cache.set(k, valores[i]));
-    for (const u of urls.values()) URL.revokeObjectURL(u);
-    urls.clear();
-    idsArq.forEach((id, i) => urls.set(id, URL.createObjectURL(blobs[i])));
   }
 
   const avisar = () => setTimeout(() => ouvintes.forEach((f) => f()), 0);
@@ -158,7 +154,11 @@
   // ---------------- leitura de fotos com o Google Gemini (plano gratuito) ----------------
   // Chave grátis em aistudio.google.com/apikey. Fica guardada só neste aparelho.
   // Se a cota grátis de um modelo acabar, tenta o próximo da lista.
-  const MODELOS = ['gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-2.5-flash'];
+  // [modelo, configuração de raciocínio, tempo máximo em ms]
+  const MODELOS = {
+    nota: [['gemini-3.5-flash-lite', null, 25000], ['gemini-3.6-flash', { thinkingLevel: 'minimal' }, 40000], ['gemini-3.8-flash', { thinkingLevel: 'low' }, 60000], ['gemini-2.5-flash', null, 60000]],
+    nomes: [['gemini-3.8-flash', { thinkingLevel: 'low' }, 45000], ['gemini-3.6-flash', { thinkingLevel: 'minimal' }, 40000], ['gemini-3.5-flash-lite', null, 25000]],
+  };
   const URL_API = 'https://generativelanguage.googleapis.com/v1beta/models/';
   const T = (type, extra = {}) => ({ type, ...extra });
   const N = (type) => ({ type, nullable: true });
@@ -181,6 +181,7 @@
     nota: T('OBJECT', {
       properties: {
         eh_nota_fiscal: T('BOOLEAN'),
+        moeda: T('STRING', { enum: ['USD', 'BRL'], description: 'USD é o padrão; BRL só quando há R$ ou é DANFE/NF-e brasileiro' }),
         emitente_nome: N('STRING'),
         emitente_cnpj: N('STRING'),
         numero: N('STRING'),
@@ -197,7 +198,7 @@
         valor_total: N('NUMBER'),
         avisos: T('ARRAY', { items: T('STRING') }),
       },
-      required: ['eh_nota_fiscal', 'emitente_nome', 'emitente_cnpj', 'numero', 'serie', 'chave_acesso', 'data_emissao', 'itens', 'valor_produtos', 'frete', 'seguro', 'desconto', 'outras_despesas', 'impostos_adicionais', 'valor_total', 'avisos'],
+      required: ['eh_nota_fiscal', 'moeda', 'emitente_nome', 'emitente_cnpj', 'numero', 'serie', 'chave_acesso', 'data_emissao', 'itens', 'valor_produtos', 'frete', 'seguro', 'desconto', 'outras_despesas', 'impostos_adicionais', 'valor_total', 'avisos'],
     }),
     nomes: T('OBJECT', {
       properties: {
@@ -228,17 +229,23 @@
       r.readAsDataURL(blob);
     });
 
-  async function chamarGemini(chave, modelo, corpo) {
+  async function chamarGemini(chave, modelo, corpo, limite = 60000) {
     let r;
+    const ctl = new AbortController();
+    const relogio = setTimeout(() => ctl.abort(), limite);
     try {
       r = await fetch(`${URL_API}${modelo}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': chave },
         body: JSON.stringify(corpo),
+        signal: ctl.signal,
       });
-    } catch {
+    } catch (e) {
+      clearTimeout(relogio);
+      if (ctl.signal.aborted) throw { code: 'proximo_modelo' }; // demorou demais: tenta o próximo
       throw { code: 'sem_internet' };
     }
+    clearTimeout(relogio);
     let dados = null;
     try {
       dados = await r.json();
@@ -250,6 +257,7 @@
     if (r.status === 400 && /API_KEY_INVALID/.test(razao + status)) throw { code: 'chave_invalida' };
     if (r.status === 401 || r.status === 403) throw { code: 'chave_invalida' };
     if (r.status === 429 || r.status === 404 || status === 'RESOURCE_EXHAUSTED' || status === 'NOT_FOUND') throw { code: 'proximo_modelo', limite: r.status === 429 };
+    if (r.status === 400 && /thinking/i.test(dados?.error?.message || '')) throw { code: 'proximo_modelo' };
     if (r.status === 400) throw { code: 'pedido_recusado' };
     throw { code: 'proximo_modelo' };
   }
@@ -263,15 +271,16 @@
         const partes = [];
         for (const b of imagens) partes.push({ inline_data: { mime_type: b.type || 'image/jpeg', data: await paraBase64(b) } });
         partes.push({ text: prompt });
-        const corpo = {
-          contents: [{ role: 'user', parts: partes }],
-          generationConfig: { responseMimeType: 'application/json', responseSchema: ESQUEMAS[opcoes.tipo] || ESQUEMAS.nota, temperature: 0.1, maxOutputTokens: 16384 },
-        };
+        const tipo = opcoes.tipo === 'nomes' ? 'nomes' : 'nota';
         let limite = false;
-        for (const modelo of MODELOS) {
+        for (const [modelo, pensar, tempo] of MODELOS[tipo]) {
+          const corpo = {
+            contents: [{ role: 'user', parts: partes }],
+            generationConfig: { responseMimeType: 'application/json', responseSchema: ESQUEMAS[tipo], temperature: 0.1, maxOutputTokens: 16384, ...(pensar ? { thinkingConfig: pensar } : {}) },
+          };
           let dados;
           try {
-            dados = await chamarGemini(chave, modelo, corpo);
+            dados = await chamarGemini(chave, modelo, corpo, tempo);
           } catch (e) {
             if (e.code === 'proximo_modelo') {
               limite ||= e.limite;
@@ -349,8 +358,235 @@
     }
   }
 
+  // foto da nota: lida do aparelho só quando aparece na tela
+  const carregando = new Set();
+  function urlFoto(id) {
+    if (urls.has(id)) return urls.get(id);
+    if (idb && !carregando.has(id)) {
+      carregando.add(id);
+      req(idb.transaction('arquivos').objectStore('arquivos').get(id)).then((blob) => {
+        if (blob) { urls.set(id, URL.createObjectURL(blob)); avisar(); }
+      }).catch(() => {}).finally(() => carregando.delete(id));
+    }
+    return '';
+  }
+
+  // ---------------- sincronização entre aparelhos (Firebase / Firestore) ----------------
+  // Sem configuração ou sem "espaço" escolhido, tudo continua só no aparelho (modo local acima).
+  const FIREBASE = window.__FIREBASE_CONFIG || null;
+  const CHAVE_ESPACO = 'notas-giba:espaco';
+  const lerLS = (k) => { try { return localStorage.getItem(k) || ''; } catch { return ''; } };
+  const gravarLS = (k, v) => { try { v ? localStorage.setItem(k, v) : localStorage.removeItem(k); } catch {} };
+  let ESPACO = lerLS(CHAVE_ESPACO);
+  let fs = null;
+  let carregandoKit = null;
+  let aoMudarFoto = () => {};
+  const novoEspaco = () => { const a = new Uint8Array(24); crypto.getRandomValues(a); return Array.from(a, (b) => 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 56]).join(''); };
+
+  function carregarKit() {
+    carregandoKit ??= new Promise((ok, erro) => {
+      if (window.FB) return ok();
+      const s = document.createElement('script');
+      s.src = 'vendor/sync.js';
+      s.onload = () => ok();
+      s.onerror = () => { carregandoKit = null; erro(new Error('Não consegui carregar a sincronização. Verifique a internet e recarregue.')); };
+      document.head.append(s);
+    });
+    return carregandoKit;
+  }
+
+  let conectando = null;
+  function conectarFirestore() {
+    // uma única conexão, mesmo quando dados e fotos pedem ao mesmo tempo
+    conectando ??= (async () => {
+      await carregarKit();
+      let f;
+      try {
+        f = FB.initializeFirestore(FB.initializeApp(FIREBASE), { ignoreUndefinedProperties: true, localCache: FB.persistentLocalCache({ tabManager: FB.persistentMultipleTabManager() }) });
+      } catch {
+        // navegador sem armazenamento persistente (ex.: modo anônimo): funciona só com internet
+        f = FB.initializeFirestore(FB.initializeApp(FIREBASE, 'sem-cache'), { ignoreUndefinedProperties: true });
+      }
+      const emu = lerLS('notas-giba:emulador'); // só para testes
+      if (emu) FB.connectFirestoreEmulator(f, emu.split(':')[0], Number(emu.split(':')[1]));
+      fs = f;
+      return f;
+    })().catch((e) => { conectando = null; throw e; });
+    return conectando;
+  }
+
+  // Gravação que não trava a tela: o Firestore aplica na hora no aparelho e envia quando houver internet.
+  function semEsperar(prom) {
+    prom.catch((e) => { console.warn('[sync]', e); window.dispatchEvent(new CustomEvent('notas-erro-sync', { detail: e?.code || e?.message })); });
+    return Promise.race([prom, new Promise((ok) => setTimeout(ok, 1500))]).then(() => {});
+  }
+
+  function criarRemoto(fs, espaco) {
+    const base = `espacos/${espaco}/`;
+    const conv = (s) => ({ id: s.id, exists: s.exists(), data: () => s.data(), metadata: s.metadata });
+    const convLista = (s) => ({ docs: s.docs.map(conv), size: s.size, empty: s.empty, metadata: s.metadata, docChanges: () => [] });
+    function rdoc(p) {
+      const r = FB.doc(fs, base + p);
+      return {
+        id: r.id,
+        path: p,
+        get: async () => conv(await FB.getDoc(r)),
+        set: (d) => semEsperar(FB.setDoc(r, clonar(d))),
+        update: (d) => semEsperar(FB.updateDoc(r, clonar(d))),
+        delete: () => semEsperar(FB.deleteDoc(r)),
+        onSnapshot: (prox, erro) => FB.onSnapshot(r, (s) => prox(conv(s)), erro),
+        collection: (sub) => rcol(`${p}/${sub}`),
+      };
+    }
+    function rcol(p) {
+      const c = FB.collection(fs, base + p);
+      return {
+        path: p,
+        doc: (id) => rdoc(`${p}/${id || FB.doc(c).id}`),
+        add: async (d) => { const r = FB.doc(c); await semEsperar(FB.setDoc(r, clonar(d))); return rdoc(`${p}/${r.id}`); },
+        get: async () => convLista(await FB.getDocs(c)),
+        onSnapshot: (prox, erro) => FB.onSnapshot(c, (s) => prox(convLista(s)), erro),
+      };
+    }
+    return { doc: rdoc, collection: rcol };
+  }
+
+  // fotos: guardadas como documentos (imagem comprimida), para não precisar de plano pago
+  async function reduzir(blob, lado = 1400, q = 0.72) {
+    const bmp = await createImageBitmap(blob);
+    const k = Math.min(1, lado / Math.max(bmp.width, bmp.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(bmp.width * k); cv.height = Math.round(bmp.height * k);
+    cv.getContext('2d').drawImage(bmp, 0, 0, cv.width, cv.height);
+    return new Promise((ok) => cv.toBlob(ok, 'image/jpeg', q));
+  }
+  const deBase64 = (b64, tipo) => new Blob([Uint8Array.from(atob(b64), (c) => c.charCodeAt(0))], { type: tipo || 'image/jpeg' });
+
+  function criarArquivosRemotos(fs, espaco) {
+    const col = FB.collection(fs, `espacos/${espaco}/arquivos`);
+    return {
+      async upload(blob) {
+        let b = blob;
+        if (b.size > 600000) b = await reduzir(b);
+        if (b.size > 600000) b = await reduzir(b, 1100, 0.6);
+        const r = FB.doc(col);
+        await semEsperar(FB.setDoc(r, { tipo: b.type || 'image/jpeg', dados: await paraBase64(b), criado_em: new Date().toISOString() }));
+        const url = URL.createObjectURL(b);
+        urls.set(r.id, url);
+        return { id: r.id, url, sizeBytes: b.size, contentType: b.type };
+      },
+      async delete(id) {
+        await semEsperar(FB.deleteDoc(FB.doc(col, id)));
+        if (urls.has(id)) URL.revokeObjectURL(urls.get(id));
+        urls.delete(id);
+      },
+    };
+  }
+  const buscandoFoto = new Set();
+  function urlFotoRemota(id) {
+    if (urls.has(id)) return urls.get(id);
+    if (fs && !buscandoFoto.has(id)) {
+      buscandoFoto.add(id);
+      FB.getDoc(FB.doc(fs, `espacos/${ESPACO}/arquivos/${id}`)).then((s) => {
+        const d = s.data();
+        if (d?.dados) { urls.set(id, URL.createObjectURL(deBase64(d.dados, d.tipo))); aoMudarFoto(); }
+      }).catch(() => {}).finally(() => buscandoFoto.delete(id));
+    }
+    return '';
+  }
+
+  // Leva tudo o que está só neste aparelho para o espaço compartilhado (sem apagar nada de lá).
+  async function enviarDadosLocais(espaco, aoProgresso = () => {}) {
+    await abrir();
+    const f = await conectarFirestore();
+    const base = `espacos/${espaco}/`;
+    const t = idb.transaction('arquivos');
+    const [ids, blobs] = await Promise.all([req(t.objectStore('arquivos').getAllKeys()), req(t.objectStore('arquivos').getAll())]);
+    const itens = [...cache.entries()];
+    const ajustesRemotos = await FB.getDoc(FB.doc(f, base + 'config/ajustes')).then((s) => s.exists()).catch(() => false);
+    let lote = FB.writeBatch(f), n = 0, feitos = 0;
+    const total = itens.length + ids.length;
+    const fechar = async () => { if (n) { await lote.commit(); lote = FB.writeBatch(f); n = 0; } };
+    for (const [caminho, valor] of itens) {
+      if (caminho === 'config/ajustes' && ajustesRemotos) continue;
+      lote.set(FB.doc(f, base + caminho), clonar(valor)); n++; feitos++;
+      if (n >= 300) { await fechar(); aoProgresso(feitos, total); }
+    }
+    await fechar();
+    for (let i = 0; i < ids.length; i++) {
+      let b = blobs[i];
+      if (b.size > 600000) b = await reduzir(b);
+      await FB.setDoc(FB.doc(f, `${base}arquivos/${ids[i]}`), { tipo: b.type || 'image/jpeg', dados: await paraBase64(b), criado_em: new Date().toISOString() });
+      feitos++; aoProgresso(feitos, total);
+    }
+    gravarLS(`notas-giba:enviado-${espaco}`, '1');
+    return total;
+  }
+
+  async function exportarRemoto() {
+    const f = await conectarFirestore();
+    const base = `espacos/${ESPACO}/`;
+    const docs = {};
+    for (const c of ['notas', 'contatos', 'encomendas', 'config']) {
+      const s = await FB.getDocs(FB.collection(f, base + c));
+      s.docs.forEach((d) => (docs[`${c}/${d.id}`] = d.data()));
+    }
+    const arquivos = {};
+    const s = await FB.getDocs(FB.collection(f, base + 'arquivos'));
+    s.docs.forEach((d) => (arquivos[d.id] = { tipo: d.data().tipo, base64: d.data().dados }));
+    return new Blob([JSON.stringify({ app: 'notas-giba', versao: 1, exportado_em: new Date().toISOString(), docs, arquivos })], { type: 'application/json' });
+  }
+
+  async function importarRemoto(arquivo) {
+    let dados;
+    try { dados = JSON.parse(await arquivo.text()); } catch { throw new Error('Este arquivo não é um backup válido.'); }
+    if (dados?.app !== 'notas-giba' || typeof dados.docs !== 'object') throw new Error('Este arquivo não é um backup do Notas do Giba.');
+    const f = await conectarFirestore();
+    const base = `espacos/${ESPACO}/`;
+    let lote = FB.writeBatch(f), n = 0;
+    for (const [k, v] of Object.entries(dados.docs)) { lote.set(FB.doc(f, base + k), v); if (++n >= 300) { await lote.commit(); lote = FB.writeBatch(f); n = 0; } }
+    if (n) await lote.commit();
+    for (const [id, a] of Object.entries(dados.arquivos || {})) await FB.setDoc(FB.doc(f, `${base}arquivos/${id}`), { tipo: a.tipo || 'image/jpeg', dados: a.base64 });
+    return Object.keys(dados.docs).length;
+  }
+
+  const linkConexao = (comChave) => {
+    const dados = { e: ESPACO };
+    if (comChave && lerChave()) dados.k = lerChave();
+    const b64 = btoa(JSON.stringify(dados)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    return `${location.origin}${location.pathname}#conectar-${b64}`;
+  };
+  function lerLinkConexao() {
+    if (!/^#conectar-/.test(location.hash)) return null;
+    try {
+      const b64 = location.hash.slice(10).replace(/-/g, '+').replace(/_/g, '/');
+      const d = JSON.parse(atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4)));
+      history.replaceState(null, '', location.pathname + location.search + '#inicio');
+      return d && typeof d.e === 'string' && d.e.length >= 20 ? d : null;
+    } catch { history.replaceState(null, '', location.pathname + location.search + '#inicio'); return null; }
+  }
+  const qrSvg = (texto) => { if (!window.QR) return ''; const q = QR(0, 'M'); q.addData(texto); q.make(); return q.createSvgTag({ cellSize: 6, margin: 2, scalable: true }); };
+
+  const sincronizacao = {
+    disponivel: Boolean(FIREBASE),
+    get ativa() { return Boolean(FIREBASE && ESPACO); },
+    get espaco() { return ESPACO; },
+    linkConexao,
+    qrSvg,
+    carregarKit,
+    // liga a sincronização neste aparelho criando um espaço novo (ou entrando num existente)
+    async ligar(espaco = novoEspaco(), aoProgresso) {
+      if (!FIREBASE) throw new Error('A sincronização ainda não foi configurada no site.');
+      const n = await enviarDadosLocais(espaco, aoProgresso);
+      gravarLS(CHAVE_ESPACO, espaco); ESPACO = espaco;
+      return n;
+    },
+    desligar() { gravarLS(CHAVE_ESPACO, ''); ESPACO = ''; },
+  };
+
   window.__NOTAS_LOCAL = {
-    url: (id) => urls.get(id) || '',
+    url: (id) => (sincronizacao.ativa ? urlFotoRemota(id) : urlFoto(id)),
+    set aoMudarFoto(fn) { aoMudarFoto = fn; },
     chave: lerChave,
     salvarChave(chave) {
       try {
@@ -360,15 +596,26 @@
         throw new Error('O navegador não deixou guardar a chave (modo anônimo?).');
       }
     },
-    exportar,
-    importar,
+    exportar: () => (sincronizacao.ativa ? exportarRemoto() : exportar()),
+    importar: (a) => (sincronizacao.ativa ? importarRemoto(a) : importar(a)),
     espaco,
+    sincronizacao,
+    lerLinkConexao,
   };
 
   window.claude = {
     async use(nome) {
-      if (nome === 'db') return abrir().then(() => db);
-      if (nome === 'assets') return abrir().then(() => assets);
+      if (nome === 'db' || nome === 'assets') {
+        if (sincronizacao.ativa) {
+          try {
+            const f = await conectarFirestore();
+            return nome === 'db' ? criarRemoto(f, ESPACO) : criarArquivosRemotos(f, ESPACO);
+          } catch (e) {
+            console.warn('[sync] sem sincronização agora, usando o aparelho', e);
+          }
+        }
+        return abrir().then(() => (nome === 'db' ? db : assets));
+      }
       if (nome === 'sample') {
         const chave = lerChave();
         return chave ? criarSample(chave) : null;

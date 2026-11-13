@@ -90,6 +90,8 @@ const S = {
   ajustes: { ...AJUSTES_PADRAO },
   carregado: new Set(),
   flash: null,
+  melhorando: new Set(),
+  tentouCotacao: new Set(),
   filtroEnc: 'abertas',
   abrirNovaEncomenda: false,
 };
@@ -142,11 +144,34 @@ function assinar() {
 const pronto = () => ['notas', 'contatos', 'encomendas'].every((c) => S.carregado.has(c));
 
 // ---------------- regras de negócio ----------------
+const memoResumo = new WeakMap();
 const resumo = (nota) => {
-  const r = resumoNota(nota, nota.itens || [], S.ajustes.arredondamento);
+  const modo = S.ajustes.arredondamento;
+  const m = memoResumo.get(nota);
+  if (m && m.modo === modo) return m.r;
+  const r = resumoNota(nota, nota.itens || [], modo);
   r.porItem = new Map(r.itens.map((i) => [i.id, i.calc]));
+  memoResumo.set(nota, { modo, r });
   return r;
 };
+
+// ---------------- cotação do dólar ----------------
+async function obterCotacao() {
+  const a = S.ajustes;
+  if (a.cotacao_modo === 'fixa' && Number(a.cotacao_fixa) > 0) return { valor: Number(a.cotacao_fixa), fonte: 'fixa' };
+  const tentar = async (url, ler) => {
+    const ctl = new AbortController(); const t = setTimeout(() => ctl.abort(), 6000);
+    try { const r = await fetch(url, { signal: ctl.signal }); if (!r.ok) return null; const v = Number(ler(await r.json())); return v > 0 ? v : null; } catch { return null; } finally { clearTimeout(t); }
+  };
+  const v = (await tentar('https://economia.awesomeapi.com.br/json/last/USD-BRL', (d) => d.USDBRL.ask)) || (await tentar('https://open.er-api.com/v6/latest/USD', (d) => d.rates.BRL)) || (await tentar('https://api.frankfurter.app/latest?from=USD&to=BRL', (d) => d.rates.BRL));
+  if (v) {
+    const valor = Math.round(v * 10000) / 10000;
+    S.db.doc('config/ajustes').set({ ...S.ajustes, ultima_cotacao: valor, ultima_cotacao_em: agoraISO() }).catch(() => {});
+    return { valor, fonte: 'dia' };
+  }
+  if (Number(a.ultima_cotacao) > 0) return { valor: Number(a.ultima_cotacao), fonte: 'ultima' };
+  return null;
+}
 
 function enc(e) {
   const c = S.contatos.get(e.contato_id);
@@ -295,6 +320,8 @@ async function criarNota(dados, { origem = 'manual', arquivos = [], sugestoes = 
     outras: num(dados.outras),
     impostos: num(dados.impostos),
     valor_total: num(dados.valor_total) || soma,
+    moeda: dados.moeda === 'USD' ? 'USD' : 'BRL',
+    cotacao: null,
     markup_padrao: Number.isFinite(Number(dados.markup_padrao)) && dados.markup_padrao !== null && dados.markup_padrao !== '' ? Number(dados.markup_padrao) : Number(S.ajustes.markup_padrao),
     ratear_despesas: dados.ratear_despesas === false ? 0 : 1,
     origem,
@@ -304,6 +331,13 @@ async function criarNota(dados, { origem = 'manual', arquivos = [], sugestoes = 
     itens,
     criado_em: agoraISO(),
   };
+  if (nota.moeda === 'USD') {
+    if (Number(dados.cotacao) > 0) nota.cotacao = Number(dados.cotacao);
+    else {
+      const c = await obterCotacao();
+      if (c) { nota.cotacao = c.valor; nota.cotacao_fonte = c.fonte; }
+    }
+  }
   const ref = await S.db.collection('notas').add(nota);
   const vinculadas = await combinarNota({ ...nota, id: ref.id }, sugestoes);
   return { id: ref.id, vinculadas };
@@ -454,10 +488,15 @@ Notas fiscais abreviam, cortam e às vezes erram o nome. Escreva o nome comercia
 - Se não tiver certeza da marca ou do modelo, não invente: escreva só o que dá para entender por extenso. Nunca troque números (capacidade, volume, modelo).
 - "categoria": uma palavra ou duas (ex.: Perfume, Celular, Eletrônico, Eletrodoméstico, Acessório, Roupa, Alimento).`;
 
-const PROMPT_NOTA = `Você é um assistente que lê notas fiscais brasileiras (DANFE de NF-e, NFC-e, cupom fiscal, nota de serviço ou pedido de compra) fotografadas pelo celular de um comprador que revende produtos. As imagens anexadas são as páginas de UMA mesma nota. Extraia tudo com precisão.
+const PROMPT_NOTA = `Você é um assistente que lê notas fiscais e faturas de compra (factura, invoice, DANFE de NF-e, NFC-e, cupom fiscal ou pedido de compra) fotografadas pelo celular de um comprador que revende produtos no Brasil. As imagens anexadas são as páginas de UMA mesma nota. Extraia tudo com precisão.
+
+MOEDA (muito importante):
+- O padrão é DÓLAR: "moeda": "USD". Valores com "US$", "U$", "$", "USD" ou sem símbolo nenhum são em dólar.
+- Só use "moeda": "BRL" quando os valores aparecem com "R$" ou quando o documento é um DANFE/NF-e/NFC-e brasileiro (tem "DANFE", CNPJ ou chave de acesso de 44 dígitos).
+- Informe todos os valores exatamente como estão na nota, na moeda original. Não converta.
 
 REGRAS DE LEITURA:
-- Valores em reais como número com ponto decimal (1.234,56 -> 1234.56). Leia com cuidado vírgulas e pontos. Não invente: se uma parte estiver ilegível, use null e explique em "avisos".
+- Valores como número com ponto decimal (1.234,56 -> 1234.56; 1,234.56 -> 1234.56). Leia com cuidado vírgulas e pontos. Não invente: se uma parte estiver ilegível, use null e explique em "avisos".
 - Liste TODOS os itens da tabela de produtos, na ordem da nota, sem repetir itens entre páginas. Ignore linhas que não são produtos (tributos, observações, totais).
 - "descricao": exatamente como impressa na nota.
 - "valor_total" do item = quantidade x valor unitário (já com desconto do item, se houver).
@@ -471,7 +510,7 @@ ENCOMENDAS DE CLIENTES:
 - "encomendas_ids": se um item for claramente o mesmo produto de uma encomenda pendente da lista abaixo (mesmo modelo, capacidade, volume, versão), coloque o id dela. Considere apelidos e grafias diferentes (ex.: encomenda "fakhar preto" = "Perfume Lattafa Fakhar Black"). Na dúvida, deixe []. A soma das quantidades associadas não pode passar da quantidade do item.
 
 Responda SOMENTE com um objeto JSON neste formato:
-{"eh_nota_fiscal": true, "emitente_nome": "texto ou null", "emitente_cnpj": "só números ou null", "numero": "texto ou null", "serie": "texto ou null", "chave_acesso": "44 dígitos ou null", "data_emissao": "AAAA-MM-DD ou null", "itens": [{"codigo": "texto ou null", "descricao": "texto", "nome_produto": "texto", "categoria": "texto ou null", "ncm": "texto ou null", "quantidade": 1, "unidade": "UN", "valor_unitario": 0.0, "valor_total": 0.0, "encomendas_ids": []}], "valor_produtos": 0.0, "frete": 0.0, "seguro": 0.0, "desconto": 0.0, "outras_despesas": 0.0, "impostos_adicionais": 0.0, "valor_total": 0.0, "avisos": []}`;
+{"eh_nota_fiscal": true, "moeda": "USD ou BRL", "emitente_nome": "texto ou null", "emitente_cnpj": "só números ou null", "numero": "texto ou null", "serie": "texto ou null", "chave_acesso": "44 dígitos ou null", "data_emissao": "AAAA-MM-DD ou null", "itens": [{"codigo": "texto ou null", "descricao": "texto", "nome_produto": "texto", "categoria": "texto ou null", "ncm": "texto ou null", "quantidade": 1, "unidade": "UN", "valor_unitario": 0.0, "valor_total": 0.0, "encomendas_ids": []}], "valor_produtos": 0.0, "frete": 0.0, "seguro": 0.0, "desconto": 0.0, "outras_despesas": 0.0, "impostos_adicionais": 0.0, "valor_total": 0.0, "avisos": []}`;
 
 const PROMPT_NOMES = `Você ajuda um revendedor brasileiro a entender os itens de uma nota fiscal. Para cada descrição abaixo (copiada da nota), escreva o nome comercial claro do produto.
 
@@ -554,6 +593,7 @@ async function lerNotaPorFoto(blobs) {
       outras: num(n.outras_despesas) || 0,
       impostos: num(n.impostos_adicionais) || 0,
       valor_total: total || soma,
+      moeda: n.moeda === 'BRL' ? 'BRL' : 'USD',
       itens,
       avisos,
     },
@@ -582,6 +622,30 @@ async function nomearItens(itens) {
   } catch (e) {
     console.warn('nomes não gerados', e);
     return new Map();
+  }
+}
+
+// Depois da leitura rápida, um modelo mais caprichoso revisa os nomes dos produtos (em segundo plano).
+async function melhorarNomes(notaId) {
+  if (!S.sample || !LOCAL) return;
+  const nota = S.notas.get(notaId);
+  if (!nota) return;
+  S.melhorando.add(notaId); agendarRender();
+  try {
+    const itens = (nota.itens || []).map((i) => ({ ...i }));
+    const antes = itens.map((i) => i.nome);
+    const sugestoes = await nomearItens(itens, { rapido: false });
+    const atual = S.notas.get(notaId);
+    if (!atual) return;
+    const novos = (atual.itens || []).map((i) => { const m = itens.find((x) => x.id === i.id); return m && m.nome ? { ...i, nome: m.nome, categoria: m.categoria || i.categoria } : i; });
+    const mudou = novos.some((i, k) => i.nome !== antes[k]);
+    if (mudou) await salvarNota(notaId, { itens: novos });
+    const mais = await combinarNota({ ...atual, itens: novos, id: notaId }, sugestoes);
+    if (mudou || mais) toast(mais ? `Nomes revisados ✓ e mais ${mais} encomenda(s) encontrada(s)` : 'Nomes dos produtos revisados pela IA ✓');
+  } catch (e) {
+    console.warn('revisão de nomes falhou', e);
+  } finally {
+    S.melhorando.delete(notaId); agendarRender();
   }
 }
 
@@ -832,7 +896,36 @@ const agendarRender = debounce(() => {
   render();
 }, 80);
 
+// Link de configuração: ...#chave-XXXX liga a leitura de fotos neste aparelho e some da barra de endereço.
+// Funciona ao abrir o link e também quando o site já está aberto na mesma aba.
+function lerChaveDoLink() {
+  if (!LOCAL || !/^#chave-/.test(location.hash)) return false;
+  const chave = decodeURIComponent(location.hash.slice(7)).replace(/\s+/g, '');
+  history.replaceState(null, '', location.pathname + location.search + '#inicio');
+  if (chave.length < 20) return false;
+  try {
+    LOCAL.salvarChave(chave);
+    return true;
+  } catch (e) {
+    falhou(e);
+    return false;
+  }
+}
+window.addEventListener('hashchange', async () => {
+  if (!/^#chave-/.test(location.hash) || !S.db) return;
+  if (lerChaveDoLink()) {
+    S.sample = await window.claude.use('sample');
+    S.limites = S.sample ? await S.sample.limits() : null;
+    $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : '⚠ Leitura de fotos desligada';
+    toast(S.sample ? 'Leitura automática de fotos ligada neste aparelho ✓' : 'Não consegui ligar a leitura de fotos. Cole a chave em Ajustes.', S.sample ? '' : 'erro');
+    render();
+  }
+});
+
+window.addEventListener('hashchange', () => { if (/^#conectar-/.test(location.hash)) location.reload(); });
+
 function render() {
+  if (/^#(chave|conectar)-/.test(location.hash)) return; // links de configuração são tratados à parte
   S.renderPendente = false;
   const pag = $('#pagina');
   if (!pag) return;
@@ -1043,7 +1136,7 @@ async function prepararArquivo(file) {
       img.src = URL.createObjectURL(file);
     });
   }
-  const escala = Math.min(1, 2200 / Math.max(bmp.width, bmp.height));
+  const escala = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
   const cv = document.createElement('canvas');
   cv.width = Math.round(bmp.width * escala);
   cv.height = Math.round(bmp.height * escala);
@@ -1123,13 +1216,13 @@ function paginaEnviar(pag) {
     const etapas = ['Preparando as fotos…', 'Lendo os itens…', 'Conferindo os valores…', 'Procurando encomendas dos clientes…', 'Quase lá…'];
     const ov = document.createElement('div');
     ov.className = 'lendo';
-    ov.innerHTML = `<div class="caixa"><div class="spinner"></div><h2>Lendo a nota fiscal</h2><p class="etapa">${etapas[0]}</p><p class="tiny">Pode levar até um minuto.</p></div>`;
+    ov.innerHTML = `<div class="caixa"><div class="spinner"></div><h2>Lendo a nota fiscal</h2><p class="etapa">${etapas[0]}</p><p class="tiny">Normalmente leva poucos segundos.</p></div>`;
     document.body.append(ov);
     let k = 0;
     const t = setInterval(() => {
       k = Math.min(k + 1, etapas.length - 1);
       $('.etapa', ov).textContent = etapas[k];
-    }, 5000);
+    }, 2500);
     try {
       let lido;
       let origem;
@@ -1137,7 +1230,7 @@ function paginaEnviar(pag) {
       const xml = envio.find((a) => a.tipo === 'xml');
       if (xml) {
         if (!ehXmlNFe(xml.texto)) throw new ErroUsuario('Este XML não é de uma NF-e.');
-        const nota = lerXmlNFe(xml.texto);
+        const nota = { ...lerXmlNFe(xml.texto), moeda: 'BRL' };
         $('.etapa', ov).textContent = 'Identificando os produtos…';
         lido = { nota, sugestoes: await nomearItens(nota.itens) };
         origem = 'xml';
@@ -1162,6 +1255,7 @@ function paginaEnviar(pag) {
       envio = [];
       S.flash = { nota: r.id, vinculadas: r.vinculadas };
       ir(`nota-${r.id}`);
+      if (origem === 'foto') melhorarNomes(r.id);
     } catch (e) {
       if (e.notaId) {
         toast('Essa nota já estava cadastrada. Abrindo…');
@@ -1277,7 +1371,13 @@ function paginaNota(pag, id) {
       ${usados + 1e-9 < item.quantidade ? `<button class="add-pessoa" data-para-quem="${esc(item.id)}">${ic('mais', 'sm')} Para quem é?</button>` : ''}
     </div>`;
   };
-  const meta = [nota.numero && `Nº ${esc(nota.numero)}${nota.serie ? `/${esc(nota.serie)}` : ''}`, dataBR(dataNota(nota)), nota.emitente_cnpj && `CNPJ ${esc(nota.emitente_cnpj)}`, ORIGENS[nota.origem]].filter(Boolean).join(' · ');
+  const meta = [nota.numero && `Nº ${esc(nota.numero)}${nota.serie ? `/${esc(nota.serie)}` : ''}`, dataBR(dataNota(nota)), nota.emitente_cnpj && `CNPJ ${esc(nota.emitente_cnpj)}`, ORIGENS[nota.origem], nota.moeda === 'USD' ? '💵 em dólar' : ''].filter(Boolean).join(' · ');
+  const M = (v) => naMoeda(v, nota.moeda);
+  const semCotacao = nota.moeda === 'USD' && !(Number(nota.cotacao) > 0);
+  if (semCotacao && !S.tentouCotacao.has(id)) {
+    S.tentouCotacao.add(id);
+    obterCotacao().then((c) => c && salvarNota(id, { cotacao: c.valor, cotacao_fonte: c.fonte })).catch(() => {});
+  }
 
   pag.innerHTML = `
     <a href="#notas" class="voltar">${ic('seta', 'sm')} Notas</a>
@@ -1290,6 +1390,8 @@ function paginaNota(pag, id) {
     </div>
 
     ${flash ? `<div class="alerta ok mb">${ic('check')}<div><strong>Nota cadastrada com ${nota.itens.length} ite${nota.itens.length === 1 ? 'm' : 'ns'}.</strong> ${flash.vinculadas ? `Encontrei <b>${flash.vinculadas} encomenda${flash.vinculadas > 1 ? 's' : ''}</b> de clientes nesta nota. Confira abaixo e avise pelo WhatsApp.` : 'Nenhuma encomenda pendente bateu com estes itens. Use “Para quem é?” para indicar o cliente.'} Confira os valores lidos.</div></div>` : ''}
+    ${semCotacao ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Falta a cotação do dólar.</strong> Não consegui buscar a cotação agora. Digite o valor do dólar no campo “US$ 1 =” abaixo para converter os custos para reais.</div></div>` : ''}
+    ${S.melhorando.has(id) ? `<div class="alerta info mb"><span class="spinner peq"></span><div>A IA está revisando os nomes dos produtos. A tela atualiza sozinha.</div></div>` : ''}
     ${nota.avisos?.length ? `<div class="alerta aviso mb">${ic('alerta')}<div><strong>Atenção na leitura:</strong><ul>${nota.avisos.map((a) => `<li>${esc(a)}</li>`).join('')}</ul></div></div>` : ''}
 
     <div class="grid kpis" id="kpis"></div>
@@ -1300,9 +1402,16 @@ function paginaNota(pag, id) {
           <span class="input-sufixo"><input id="markup-geral" inputmode="decimal" value="${campoNum(nota.markup_padrao)}" /><span>%</span></span>
         </label>
         <button class="btn" id="bt-aplicar">Aplicar a todos os itens</button>
+        <label class="campo moeda-nota" for="moeda-nota">Moeda da nota
+          <select id="moeda-nota"><option value="USD" ${nota.moeda === 'USD' ? 'selected' : ''}>Dólar (US$)</option><option value="BRL" ${nota.moeda !== 'USD' ? 'selected' : ''}>Real (R$)</option></select>
+        </label>
+        ${nota.moeda === 'USD' ? `<label class="campo cotacao-nota" for="cotacao-nota">US$ 1 =
+          <span class="input-prefixo"><input id="cotacao-nota" inputmode="decimal" value="${Number(nota.cotacao) > 0 ? String(nota.cotacao).replace('.', ',') : ''}" placeholder="5,40" /><span>R$</span></span>
+          <span class="tiny">${nota.cotacao_fonte === 'dia' ? 'cotação do dia' : nota.cotacao_fonte === 'fixa' ? 'cotação fixa dos Ajustes' : nota.cotacao_fonte === 'ultima' ? 'última cotação conhecida' : 'digitada'}</span>
+        </label>` : ''}
         <label class="check" title="Espalha frete, impostos e descontos da nota no custo de cada item">
           <input type="checkbox" id="ratear" ${nota.ratear_despesas ? 'checked' : ''} />
-          <span>Incluir frete/impostos no custo <span class="tiny bloco">${Math.abs(despesas) >= 0.01 ? `${despesas > 0 ? '+' : '−'}${R(Math.abs(despesas))} além dos produtos` : 'nota sem despesas extras'}</span></span>
+          <span>Incluir frete/impostos no custo <span class="tiny bloco">${Math.abs(despesas) >= 0.01 ? `${despesas > 0 ? '+' : '−'}${M(Math.abs(despesas))} além dos produtos` : 'nota sem despesas extras'}</span></span>
         </label>
         ${(nota.arquivos || []).filter((a) => srcArquivo(a.asset_id)).length ? `<div class="foto-nota">${nota.arquivos.filter((a) => srcArquivo(a.asset_id)).map((a) => `<button data-ver="${esc(srcArquivo(a.asset_id))}" aria-label="Ver foto da nota"><img src="${esc(srcArquivo(a.asset_id))}" alt="Foto da nota" loading="lazy"></button>`).join('')}</div>` : ''}
       </div>
@@ -1313,7 +1422,7 @@ function paginaNota(pag, id) {
           <tbody>${r.itens
             .map(
               (i) => `<tr data-item="${esc(i.id)}">
-              <td class="col-produto"><div class="item-desc">${esc(nomeItem(i))}</div><div class="item-meta">${[i.nome && i.nome !== i.descricao && `Na nota: ${esc(i.descricao)}`, i.codigo && `Cód. ${esc(i.codigo)}`, `${R(i.valor_unitario)} na nota`].filter(Boolean).join(' · ')}</div>${pessoasDoItem(nota.itens.find((x) => x.id === i.id))}</td>
+              <td class="col-produto"><div class="item-desc">${esc(nomeItem(i))}</div><div class="item-meta">${[i.nome && i.nome !== i.descricao && `Na nota: ${esc(i.descricao)}`, i.codigo && `Cód. ${esc(i.codigo)}`, `${M(i.valor_unitario)} na nota`].filter(Boolean).join(' · ')}</div>${pessoasDoItem(nota.itens.find((x) => x.id === i.id))}</td>
               <td class="dir num">${numeroBR(i.quantidade, 3)}${i.unidade ? ` <span class="tiny">${esc(i.unidade)}</span>` : ''}</td>
               <td class="dir num c-custo"></td>
               <td class="dir"><span class="input-sufixo c-mk-wrap"><input class="campo-tab c-markup" inputmode="decimal" aria-label="Porcentagem" /><span>%</span></span></td>
@@ -1353,7 +1462,7 @@ function paginaNota(pag, id) {
 
   const pintarKpis = () => {
     $('#kpis').innerHTML = `
-      <div class="card kpi"><div class="rotulo">${ic('carteira', 'sm')} Investido</div><div class="valor">${R(r.investido)}</div><div class="det">total da nota ${R(nota.valor_total)}</div></div>
+      <div class="card kpi"><div class="rotulo">${ic('carteira', 'sm')} Investido</div><div class="valor">${R(r.investido)}</div><div class="det">total da nota ${M(nota.valor_total)}${nota.moeda === 'USD' && nota.cotacao ? ` · US$ 1 = ${R(nota.cotacao)}` : ''}</div></div>
       <div class="card kpi"><div class="rotulo">${ic('sacola', 'sm')} Valor de venda</div><div class="valor">${R(r.venda)}</div><div class="det">${nota.itens.length} ite${nota.itens.length === 1 ? 'm' : 'ns'}</div></div>
       <div class="card kpi destaque"><div class="rotulo">${ic('tendencia', 'sm')} Retorno</div><div class="valor">${R(r.lucro)}</div><div class="det">margem ${pct(r.margem)}</div></div>
       <div class="card kpi"><div class="rotulo">${ic('caixa', 'sm')} Encomendas</div><div class="valor">${todasEnc.length}</div><div class="det">${abertas.filter((e) => e.status === 'chegou').length} para avisar</div></div>`;
@@ -1428,6 +1537,28 @@ function paginaNota(pag, id) {
     toast(`${numeroBR(v)}% aplicado em todos os itens ✓`);
   };
   $('#ratear').onchange = (e) => salvarNota(id, { ratear_despesas: e.target.checked ? 1 : 0 }).catch(falhou);
+  $('#moeda-nota').onchange = async (e) => {
+    const moeda = e.target.value;
+    const dados = { moeda };
+    if (moeda === 'USD' && !(Number(nota.cotacao) > 0)) {
+      const c = await obterCotacao();
+      if (c) Object.assign(dados, { cotacao: c.valor, cotacao_fonte: c.fonte });
+    }
+    await salvarNota(id, dados).catch(falhou);
+    toast(moeda === 'USD' ? 'Nota em dólar: custos convertidos para reais ✓' : 'Nota em reais ✓');
+  };
+  const cot = $('#cotacao-nota');
+  if (cot) {
+    const salvarCot = debounce((v) => salvarNota(id, { cotacao: v, cotacao_fonte: 'digitada' }).catch(falhou), 700);
+    cot.onfocus = () => cot.select();
+    cot.oninput = () => {
+      const v = lerNumero(cot.value);
+      if (!(v > 0)) return;
+      nota.cotacao = v;
+      pintarTudo(cot);
+      salvarCot(v);
+    };
+  }
 
   $$('[data-ver]', pag).forEach((b) => (b.onclick = () => verImagem(b.dataset.ver)));
   $('#bt-editar').onclick = () => formCabecalhoNota(original);
@@ -1467,15 +1598,17 @@ function formCabecalhoNota(nota) {
     ['data_emissao', 'Data de emissão', 'date'],
     ['numero', 'Número', 'text'],
     ['serie', 'Série', 'text'],
-    ['valor_total', 'Valor total da nota (R$)', 'money'],
-    ['frete', 'Frete (R$)', 'money'],
-    ['desconto', 'Desconto (R$)', 'money'],
-    ['impostos', 'IPI / ICMS-ST (R$)', 'money'],
+    ['valor_total', 'Valor total da nota', 'money'],
+    ['frete', 'Frete', 'money'],
+    ['desconto', 'Desconto', 'money'],
+    ['impostos', 'Impostos adicionais (IPI / ICMS-ST)', 'money'],
+    ['cotacao', 'Cotação: US$ 1 = R$ (se for em dólar)', 'money'],
   ];
   const m = modal(
     'Dados da nota',
     `<form class="form-grid" id="f-cab">
       ${campos.map(([k, n, t, cl]) => `<label class="campo ${cl || ''}">${n}<input id="cab-${k}" name="${k}" ${t === 'money' ? 'inputmode="decimal"' : `type="${t}"`} value="${esc(t === 'money' ? campoNum(nota[k]) : nota[k] || '')}" /></label>`).join('')}
+      <label class="campo">Moeda<select id="cab-moeda" name="moeda"><option value="USD" ${nota.moeda === 'USD' ? 'selected' : ''}>Dólar (US$)</option><option value="BRL" ${nota.moeda !== 'USD' ? 'selected' : ''}>Real (R$)</option></select></label>
       <label class="campo inteiro">Chave de acesso<input id="cab-chave" name="chave" inputmode="numeric" value="${esc(nota.chave || '')}" /></label>
       <label class="campo inteiro">Observações<textarea id="cab-obs" name="observacoes">${esc(nota.observacoes || '')}</textarea></label>
     </form>`,
@@ -1485,6 +1618,8 @@ function formCabecalhoNota(nota) {
     comBotao(e.currentTarget, async () => {
       const d = Object.fromEntries(new FormData($('#f-cab', m.el)));
       for (const [k, , t] of campos) if (t === 'money') d[k] = lerNumero(d[k]) || 0;
+      d.cotacao = d.cotacao > 0 ? d.cotacao : null;
+      if (d.cotacao) d.cotacao_fonte = 'digitada';
       d.chave = String(d.chave || '').replace(/\D/g, '') || null;
       d.emitente_cnpj = String(d.emitente_cnpj || '').replace(/\D/g, '') || null;
       await salvarNota(nota.id, d);
@@ -1504,8 +1639,8 @@ function formItem(nota, item) {
       <label class="campo">Código<input id="it-cod" name="codigo" value="${esc(i.codigo || '')}" /></label>
       <label class="campo">Unidade<input id="it-un" name="unidade" value="${esc(i.unidade || '')}" /></label>
       <label class="campo">Quantidade<input id="it-qtd" name="quantidade" inputmode="decimal" value="${campoNum(i.quantidade)}" /></label>
-      <label class="campo">Valor unitário (R$)<input id="it-vu" name="valor_unitario" inputmode="decimal" value="${campoNum(i.valor_unitario)}" /></label>
-      <label class="campo inteiro">Valor total do item (R$) <span class="tiny">calculado: quantidade × unitário</span><input id="it-vt" name="valor_total" inputmode="decimal" value="${campoNum(i.valor_total)}" /></label>
+      <label class="campo">Valor unitário (${nota.moeda === 'USD' ? 'US$' : 'R$'})<input id="it-vu" name="valor_unitario" inputmode="decimal" value="${campoNum(i.valor_unitario)}" /></label>
+      <label class="campo inteiro">Valor total do item (${nota.moeda === 'USD' ? 'US$' : 'R$'}) <span class="tiny">calculado: quantidade × unitário</span><input id="it-vt" name="valor_total" inputmode="decimal" value="${campoNum(i.valor_total)}" /></label>
       ${!novo && i.markup !== null && i.markup !== undefined ? `<div class="inteiro"><button type="button" class="btn peq" id="reset-mk">${ic('desfazer', 'sm')} Voltar para a porcentagem padrão da nota (${numeroBR(nota.markup_padrao)}%)</button></div>` : ''}
     </form>`,
     {
@@ -1684,7 +1819,8 @@ function paginaNotaManual(pag) {
         <label class="campo inteiro">Fornecedor<input id="m-forn" name="emitente_nome" placeholder="Ex.: Distribuidora XYZ" /></label>
         <label class="campo">Número da nota<input id="m-num" name="numero" /></label>
         <label class="campo">Data<input id="m-data" name="data_emissao" type="date" value="${diaLocal(agoraISO())}" /></label>
-        <label class="campo">Frete (R$)<input id="m-frete" name="frete" inputmode="decimal" placeholder="0,00" /></label>
+        <label class="campo">Moeda da nota<select id="m-moeda" name="moeda"><option value="USD">Dólar (US$)</option><option value="BRL">Real (R$)</option></select></label>
+        <label class="campo">Frete<input id="m-frete" name="frete" inputmode="decimal" placeholder="0,00" /></label>
         <label class="campo">Porcentagem padrão<span class="input-sufixo"><input id="m-mk" name="markup_padrao" inputmode="decimal" value="${campoNum(S.ajustes.markup_padrao)}" /><span>%</span></span></label>
       </div></div>
       <div class="card secao">
@@ -1700,7 +1836,7 @@ function paginaNotaManual(pag) {
         (l, i) => `<div class="linha-item" data-l="${i}">
         <label class="campo">${i === 0 ? 'Descrição' : '<span class="so-mobile">Descrição</span>'}<input id="l${i}-d" data-k="descricao" value="${esc(l.descricao)}" placeholder="Produto" /></label>
         <label class="campo">${i === 0 ? 'Qtd' : '<span class="so-mobile">Qtd</span>'}<input id="l${i}-q" data-k="quantidade" inputmode="decimal" value="${esc(l.quantidade)}" /></label>
-        <label class="campo">${i === 0 ? 'Valor un. (R$)' : '<span class="so-mobile">Valor un. (R$)</span>'}<input id="l${i}-v" data-k="valor_unitario" inputmode="decimal" value="${esc(l.valor_unitario)}" /></label>
+        <label class="campo">${i === 0 ? 'Valor unitário' : '<span class="so-mobile">Valor unitário</span>'}<input id="l${i}-v" data-k="valor_unitario" inputmode="decimal" value="${esc(l.valor_unitario)}" /></label>
         <button type="button" class="btn fantasma icone" data-rem="${i}" ${linhas.length === 1 ? 'disabled' : ''} aria-label="Remover item">${ic('x', 'sm')}</button>
       </div>`,
       )
@@ -1735,7 +1871,7 @@ function paginaNotaManual(pag) {
       const frete = lerNumero(f.frete.value) || 0;
       const soma = itens.reduce((t, i) => t + i.valor_unitario * i.quantidade, 0);
       const r = await criarNota(
-        { emitente_nome: f.emitente_nome.value, numero: f.numero.value, data_emissao: f.data_emissao.value, frete, valor_produtos: soma, valor_total: soma + frete, markup_padrao: lerNumero(f.markup_padrao.value), itens },
+        { emitente_nome: f.emitente_nome.value, numero: f.numero.value, data_emissao: f.data_emissao.value, frete, valor_produtos: soma, valor_total: soma + frete, moeda: f.moeda.value, markup_padrao: lerNumero(f.markup_padrao.value), itens },
         { origem: 'manual' },
       );
       S.flash = { nota: r.id, vinculadas: r.vinculadas };
@@ -1981,7 +2117,7 @@ function paginaAjustes(pag) {
       </div>
       <div class="linha"><button class="btn primario grande" id="salvar">${ic('check')} Salvar ajustes</button></div>
     </form>
-    ${LOCAL ? secaoLocal() : `<div class="card pad secao largo-760">
+    ${LOCAL ? secaoSync() + secaoLocal() : `<div class="card pad secao largo-760">
       <h2 class="mb-sm">Sobre este site</h2>
       <p class="small muted">${S.sample ? '✓ Leitura automática de fotos de notas ativa (usa o Claude da sua conta).' : '⚠ Leitura de fotos indisponível nesta tela. Abra pelo claude.ai com a sua conta.'}</p>
       <p class="small muted">Os dados ficam salvos com segurança e aparecem iguais no celular e no computador.</p>
@@ -2004,7 +2140,7 @@ function paginaAjustes(pag) {
   f.onchange = previa;
   previa();
   $('#restaurar').onclick = () => ((f.mensagem.value = MENSAGEM_PADRAO), previa());
-  if (LOCAL) ligarSecaoLocal();
+  if (LOCAL) { ligarSecaoLocal(); ligarSecaoSync(); }
   f.onsubmit = (e) => {
     e.preventDefault();
     comBotao($('#salvar'), async () => {
@@ -2014,6 +2150,69 @@ function paginaAjustes(pag) {
       toast('Ajustes salvos ✓');
     });
   };
+}
+
+// Liga a sincronização neste aparelho (espaço novo ou de outro aparelho), levando junto o que já existe aqui.
+async function conectarEspaco(espaco) {
+  const ov = document.createElement('div');
+  ov.className = 'lendo';
+  ov.innerHTML = '<div class="caixa"><div class="spinner"></div><h2>Conectando este aparelho</h2><p class="etapa">Enviando os dados deste aparelho…</p><p class="tiny">Não feche a página.</p></div>';
+  document.body.append(ov);
+  try {
+    await LOCAL.sincronizacao.ligar(espaco, (f, t) => ($('.etapa', ov).textContent = `Enviando os dados deste aparelho… ${f} de ${t}`));
+    $('.etapa', ov).textContent = 'Pronto! Abrindo…';
+    location.hash = '#ajustes';
+    location.reload();
+  } catch (e) {
+    ov.remove();
+    falhou(e);
+  }
+}
+
+function secaoSync() {
+  const sy = LOCAL.sincronizacao;
+  if (!sy.disponivel) {
+    return `<div class="card pad secao largo-760"><h2>Celular e computador juntos</h2><p class="small muted">A sincronização entre aparelhos ainda não foi configurada neste site.</p></div>`;
+  }
+  if (!sy.ativa) {
+    return `<div class="card pad secao largo-760" id="sync">
+      <h2>Celular e computador juntos <span class="badge st-chegou">desligado</span></h2>
+      <p class="small muted mb-sm">Hoje este aparelho guarda os dados só para ele. Ligue a sincronização para que notas, encomendas, clientes e fotos apareçam iguais no celular e no computador, na hora.</p>
+      <div class="linha"><button type="button" class="btn primario" id="ligar-sync">☁️ Ligar sincronização neste aparelho</button></div>
+      <p class="tiny mt">Já ligou em outro aparelho? Lá em Ajustes aparece um QR Code e um link de conexão: abra-o neste aparelho. Os dados que já estão aqui são enviados junto, nada se perde.</p>
+    </div>`;
+  }
+  const link = sy.linkConexao(true);
+  return `<div class="card pad secao largo-760" id="sync">
+      <h2>Celular e computador juntos <span class="badge st-entregue">☁️ ligado</span></h2>
+      <p class="small muted mb-sm">Este aparelho está sincronizado. Para conectar outro celular ou computador, escaneie o QR Code com a câmera dele ou mande o link. O link já leva a chave da leitura de fotos.</p>
+      <div class="sync-conectar">
+        <div class="qr" id="qr-sync">${sy.qrSvg(link)}</div>
+        <div class="pilha cresce">
+          <label class="campo" for="link-sync">Link de conexão<input id="link-sync" readonly value="${esc(link)}" /></label>
+          <div class="linha"><button type="button" class="btn" id="copiar-sync">${ic('copiar', 'sm')} Copiar link</button>
+          <a class="btn wa" target="_blank" rel="noopener" href="${esc(linkWhatsApp('', 'Link para conectar o PROSPEC Notas neste aparelho (não compartilhe): ' + link))}">${ic('whats', 'sm')} Mandar no WhatsApp</a></div>
+          <p class="tiny">Funciona sem internet também: o que for feito offline é enviado quando a conexão voltar. Trate este link como uma senha.</p>
+        </div>
+      </div>
+      <button type="button" class="btn peq fantasma mt" id="desligar-sync">Desligar a sincronização neste aparelho</button>
+    </div>`;
+}
+
+function ligarSecaoSync() {
+  $('#ligar-sync')?.addEventListener('click', async () => {
+    if (!(await confirmar('Ligar a sincronização?', 'Os dados deste aparelho vão para a nuvem e passam a aparecer em todos os aparelhos conectados.', { botao: 'Ligar' }))) return;
+    conectarEspaco();
+  });
+  $('#copiar-sync')?.addEventListener('click', async () => {
+    const inp = $('#link-sync');
+    try { await navigator.clipboard.writeText(inp.value); toast('Link copiado ✓'); } catch { inp.select(); toast('Selecione e copie o link'); }
+  });
+  $('#desligar-sync')?.addEventListener('click', async () => {
+    if (!(await confirmar('Desligar neste aparelho?', 'Este aparelho volta a usar só os dados guardados nele. Os dados na nuvem e nos outros aparelhos continuam.', { botao: 'Desligar', perigo: true }))) return;
+    LOCAL.sincronizacao.desligar();
+    location.reload();
+  });
 }
 
 function secaoLocal() {
@@ -2038,7 +2237,7 @@ function secaoLocal() {
     </div>
     <div class="card pad secao largo-760">
       <h2>Seus dados</h2>
-      <p class="small muted mb-sm">Tudo fica salvo neste navegador, mesmo depois de fechar ou desligar o computador. Cada aparelho guarda os próprios dados. Para levar para outro aparelho ou ter uma cópia de segurança, baixe o backup e abra no outro aparelho.</p>
+      <p class="small muted mb-sm">${LOCAL.sincronizacao.ativa ? 'Os dados ficam na nuvem e também guardados neste aparelho (funciona sem internet). Baixe um backup de vez em quando como cópia de segurança.' : 'Tudo fica salvo neste navegador, mesmo depois de fechar ou desligar o computador. Para ter uma cópia de segurança, baixe o backup.'}</p>
       <p class="small mb-sm" id="espaco"></p>
       <div class="linha">
         <button type="button" class="btn" id="baixar-backup">${ic('upload', 'sm')} Baixar backup</button>
@@ -2112,19 +2311,25 @@ async function iniciar() {
   const cl = window.claude;
   if (!cl?.use) return semAcesso('Abra este site pelo link do claude.ai, entrando com a sua conta.');
   if (LOCAL) document.title = 'Notas do Giba';
-  // Link de configuração: ...#chave-XXXX liga a leitura de fotos neste aparelho e some da barra de endereço.
-  let chaveDoLink = false;
-  if (LOCAL && /^#chave-/.test(location.hash)) {
-    const chave = decodeURIComponent(location.hash.slice(7)).replace(/\s+/g, '');
-    history.replaceState(null, '', location.pathname + location.search + '#inicio');
-    if (chave.length >= 20) {
-      try {
-        LOCAL.salvarChave(chave);
-        chaveDoLink = true;
-      } catch (e) {
-        falhou(e);
+  const chaveDoLink = lerChaveDoLink();
+  if (LOCAL) {
+    const conexao = LOCAL.lerLinkConexao();
+    if (conexao) {
+      if (conexao.k) LOCAL.salvarChave(conexao.k);
+      if (!LOCAL.sincronizacao.disponivel) toast('A sincronização ainda não está configurada no site.', 'erro');
+      else if (conexao.e !== LOCAL.sincronizacao.espaco) {
+        await conectarEspaco(conexao.e);
+        return;
       }
     }
+    LOCAL.aoMudarFoto = () => agendarRender();
+    let avisouSync = false;
+    window.addEventListener('notas-erro-sync', (e) => {
+      if (avisouSync) return;
+      avisouSync = true;
+      toast(e.detail === 'permission-denied' ? 'A nuvem recusou a gravação. Confira a configuração da sincronização.' : 'Não consegui salvar na nuvem agora. Fica guardado no aparelho e envia depois.', 'erro');
+      setTimeout(() => (avisouSync = false), 15000);
+    });
   }
   const [db, assets, sample] = await Promise.all([cl.use('db').catch(() => null), cl.use('assets').catch(() => null), cl.use('sample').catch(() => null)]);
   if (!db) return semAcesso(LOCAL ? 'Este navegador não conseguiu abrir o armazenamento. Saia do modo anônimo ou use Chrome, Edge, Safari ou Firefox.' : 'Entre na sua conta do Claude (a mesma que recebeu o convite) para ver e salvar suas notas.');
@@ -2134,7 +2339,7 @@ async function iniciar() {
   if (sample) S.limites = await sample.limits().catch(() => null);
   if (S.sample && S.limites && !S.limites.images) S.sample = null;
   if (chaveDoLink) toast(S.sample ? 'Leitura automática de fotos ligada neste aparelho ✓' : 'Não consegui ligar a leitura de fotos. Cole a chave em Ajustes.', S.sample ? '' : 'erro');
-  $('#status-sistema').textContent = S.sample ? '✓ Leitura de fotos ativa' : LOCAL ? '⚠ Leitura de fotos desligada' : '⚠ Leitura de fotos indisponível';
+  $('#status-sistema').textContent = (S.sample ? '✓ Leitura de fotos ativa' : LOCAL ? '⚠ Leitura de fotos desligada' : '⚠ Leitura de fotos indisponível') + (LOCAL?.sincronizacao.ativa ? ' · ☁️ Sincronizado' : '');
   const espera = setTimeout(() => {
     if (!pronto()) semAcesso('Não consegui carregar os dados. Verifique a internet e recarregue a página.');
   }, 15000);

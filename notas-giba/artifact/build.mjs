@@ -1,6 +1,9 @@
 // Junta o site num único arquivo HTML para publicar como Artifact no claude.ai.
 // Uso: node artifact/build.mjs  ->  artifact/notas-giba.html
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 
@@ -52,6 +55,8 @@ console.log(`artifact/notas-giba.html: ${(html.length / 1024).toFixed(0)} KB`);
 // ---------- versão de link aberto (GitHub Pages): ../docs ----------
 const docs = join(raiz, '..', 'docs');
 mkdirSync(join(docs, 'vendor', 'pdfjs'), { recursive: true });
+// kit de sincronização (Firebase + QR Code), carregado só quando a sincronização está ligada
+execFileSync(join(raiz, 'node_modules', '.bin', 'esbuild'), [join(raiz, 'web', 'sync-entrada.js'), '--bundle', '--minify', '--format=iife', '--platform=browser', '--target=es2020', '--log-level=warning', `--outfile=${join(docs, 'vendor', 'sync.js')}`], { stdio: 'inherit' });
 for (const f of ['pdf.min.js', 'pdf.worker.min.js']) copyFileSync(join(raiz, 'node_modules', 'pdfjs-dist', 'build', f), join(docs, 'vendor', 'pdfjs', f));
 copyFileSync(join(raiz, 'public', 'icone.svg'), join(docs, 'icone.svg'));
 writeFileSync(join(docs, '.nojekyll'), '');
@@ -60,8 +65,8 @@ writeFileSync(
   JSON.stringify({ name: 'Notas do Giba', short_name: 'Notas Giba', start_url: './', display: 'standalone', background_color: '#f4f6f5', theme_color: '#0f7a5c', lang: 'pt-BR', icons: [{ src: 'icone.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }] }, null, 2),
 );
 const corte = html.indexOf('<div id="raiz">');
-const cabeca = html.slice(0, corte).replace('<meta name="claude:viewport-fit-sides" content="cover">\n', '').replace('<meta name="theme-color" content="#0f7a5c">\n', '');
-const corpo = html.slice(corte).replace('<script>', `<script>window.__PDFJS_BASE = "vendor/pdfjs/";</script>\n<script>\n${ler('web/local.js')}\n</script>\n<script>`);
+const cabeca = html.slice(0, corte).replace('<meta name="claude:viewport-fit-sides" content="cover">\n', '').replace('<meta name="theme-color" content="#0f7a5c">\n', '').replace(/<link rel="preconnect"[^>]*>\n/g, '').replace(/<link href="https:\/\/fonts\.googleapis[^>]*>\n/, '');
+const corpo = html.slice(corte).replace('<script>', `<script>window.__PDFJS_BASE = "vendor/pdfjs/"; window.__FIREBASE_CONFIG = ${existsSync(join(raiz, 'web', 'firebase-config.json')) ? ler('web/firebase-config.json').trim() : 'null'};</script>\n<script>\n${ler('web/local.js')}\n</script>\n<script>`);
 const web = `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -81,5 +86,27 @@ ${cabeca}<style>html{padding-top:env(safe-area-inset-top,0px)}body{margin:0}</st
 ${corpo}</body>
 </html>
 `;
-writeFileSync(join(docs, 'index.html'), web);
+const versao = createHash('sha1').update(web).digest('hex').slice(0, 10);
+const comSW = web.replace('</body>', `<script>if ('serviceWorker' in navigator) addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));</script>\n</body>`);
+writeFileSync(join(docs, 'index.html'), comSW);
+// service worker: guarda o site no aparelho (abre na hora, até sem internet) e busca a versão nova quando há conexão
+writeFileSync(
+  join(docs, 'sw.js'),
+  `const CACHE = 'notas-${versao}';
+const ARQUIVOS = ['./', './index.html', './manifest.webmanifest', './icone.svg'];
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting())); });
+self.addEventListener('activate', (e) => { e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim())); });
+self.addEventListener('fetch', (e) => {
+  const u = new URL(e.request.url);
+  if (e.request.method !== 'GET' || u.origin !== location.origin) return;
+  if (e.request.mode === 'navigate' || u.pathname.endsWith('/') || u.pathname.endsWith('.html')) {
+    // página: tenta a internet primeiro (versão nova); sem conexão, usa a guardada
+    e.respondWith(fetch(e.request).then((r) => { const c = r.clone(); caches.open(CACHE).then((cc) => cc.put(e.request, c)); return r; }).catch(() => caches.match(e.request).then((r) => r || caches.match('./'))));
+    return;
+  }
+  // demais arquivos (leitor de PDF, ícone): usa o guardado e atualiza em segundo plano
+  e.respondWith(caches.match(e.request).then((r) => { const rede = fetch(e.request).then((n) => { const c = n.clone(); caches.open(CACHE).then((cc) => cc.put(e.request, c)); return n; }); return r || rede; }));
+});
+`,
+);
 console.log(`docs/index.html: ${(web.length / 1024).toFixed(0)} KB`);
